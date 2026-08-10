@@ -31,7 +31,7 @@ func (h *workspaceLeaseTestHooks) PreToolUse(context.Context, string, json.RawMe
 	h.preCalls.Add(1)
 	return false, ""
 }
-func (*workspaceLeaseTestHooks) PostToolUse(context.Context, string, json.RawMessage, string) {}
+func (*workspaceLeaseTestHooks) PostToolUse(context.Context, string, json.RawMessage, string) []string { return nil }
 func (*workspaceLeaseTestHooks) PostToolUseFailure(context.Context, string, json.RawMessage, string, error) {
 }
 func (*workspaceLeaseTestHooks) PostLLMCall(_ context.Context, reasoning string, _ int) string {

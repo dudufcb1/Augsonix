@@ -39,6 +39,11 @@ import (
 // window before the next compaction runs.
 const maxToolOutputBytes = 32 * 1024
 
+// maxHookNoticeBytes caps the combined post-tool hook notices appended to a
+// tool result, so a verbose hook cannot inflate the model context. It rides
+// the tail, which truncateToolOutput preserves.
+const maxHookNoticeBytes = 8 * 1024
+
 const maxEmptyFinalBlocks = 3
 
 // maxStreamRecoveries is the number of body-phase stream retries after the
@@ -233,12 +238,13 @@ func NormalizeMaxSubagentDepth(depth int) int {
 
 // ToolHooks fires user-configured shell hooks around each tool call. PreToolUse
 // runs before the call and may block it (block=true; message is the reason fed
-// back to the model); PostToolUse runs after and only surfaces output to the
-// user (it can't block). It is interface-shaped so the agent stays independent
+// back to the model); PostToolUse runs after and returns its non-pass outcome
+// messages so the caller can attach them to the tool result (Claude-style hook
+// feedback to the model). It is interface-shaped so the agent stays independent
 // of the hook package — a nil hooks field disables hook firing entirely.
 type ToolHooks interface {
 	PreToolUse(ctx context.Context, name string, args json.RawMessage) (block bool, message string)
-	PostToolUse(ctx context.Context, name string, args json.RawMessage, result string)
+	PostToolUse(ctx context.Context, name string, args json.RawMessage, result string) []string
 	PostToolUseFailure(ctx context.Context, name string, args json.RawMessage, result string, err error)
 	// PostLLMCall fires after each model turn completes (streaming finishes)
 	// but before reasoning_content is stored. It returns the (possibly
@@ -3465,6 +3471,20 @@ func firstLine(s string) string {
 		return before
 	}
 	return s
+}
+
+// attachHookNotices appends post-tool hook notices to a tool body so the model
+// sees hook feedback (Claude-style). Notices are kept short (maxHookNoticeBytes)
+// and ride the tail, which truncateToolOutput preserves even for huge results.
+func attachHookNotices(body string, notices []string) (string, string) {
+	if len(notices) == 0 {
+		return body, ""
+	}
+	joined := strings.Join(notices, "\n")
+	if len(joined) > maxHookNoticeBytes {
+		joined = joined[:maxHookNoticeBytes] + "\n…[hook notices truncated]"
+	}
+	return truncateToolOutput(strings.TrimRight(body, "\n") + "\n\n" + joined)
 }
 
 // truncateToolOutput head+tails s when it exceeds maxToolOutputBytes, slicing

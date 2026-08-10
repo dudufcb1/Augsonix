@@ -97,15 +97,16 @@ func (r *Runner) PreToolUse(ctx context.Context, name string, args json.RawMessa
 }
 
 // PostToolUse fires after a tool call. It can't block; non-pass outcomes are
-// surfaced to the user via notify.
-func (r *Runner) PostToolUse(ctx context.Context, name string, args json.RawMessage, result string) {
+// surfaced to the user via notify and returned as messages so the caller can
+// attach them to the tool result, giving the model Claude-style hook feedback.
+func (r *Runner) PostToolUse(ctx context.Context, name string, args json.RawMessage, result string) []string {
 	if !r.Enabled() {
-		return
+		return nil
 	}
 	p := r.payload(PostToolUse)
 	p.ToolName, p.ToolArgs, p.ToolResult = name, args, result
 	rep := Run(ctx, p, r.hooks, r.spawner)
-	r.handle(rep)
+	return r.notifyOutcomes(rep)
 }
 
 // PostToolUseFailure fires when a tool invocation returns an error.
@@ -335,7 +336,22 @@ func (r *Runner) additionalContexts(rep Report) []string {
 // handle surfaces every non-pass outcome to the user (notify) and returns the
 // block decision plus the blocking hook's message.
 func (r *Runner) handle(rep Report) (bool, string) {
+	r.notifyOutcomes(rep)
 	var blockMsg string
+	for _, o := range rep.Outcomes {
+		if o.Decision == DecisionBlock {
+			blockMsg = FormatOutcome(o)
+		}
+	}
+	return rep.Blocked, blockMsg
+}
+
+// notifyOutcomes surfaces every non-pass outcome to the notify sink and
+// returns their formatted messages. PostToolUse returns them so the caller
+// can attach them to the tool result for the model; handle uses the same loop
+// but only needs the blocking message.
+func (r *Runner) notifyOutcomes(rep Report) []string {
+	var msgs []string
 	for _, o := range rep.Outcomes {
 		if o.Decision == DecisionPass {
 			continue
@@ -344,11 +360,9 @@ func (r *Runner) handle(rep Report) (bool, string) {
 		if r.notify != nil {
 			r.notify(msg)
 		}
-		if o.Decision == DecisionBlock {
-			blockMsg = msg
-		}
+		msgs = append(msgs, msg)
 	}
-	return rep.Blocked, blockMsg
+	return msgs
 }
 
 // FormatOutcome renders a non-pass outcome as a one-line human message.

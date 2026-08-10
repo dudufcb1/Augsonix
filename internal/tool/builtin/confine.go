@@ -217,17 +217,23 @@ func confine(roots []string, target string) error {
 // after a fresh per-write human approval carried on ctx; without an approver it
 // fails closed with the original confinement error semantics.
 func confineWrite(ctx context.Context, roots []string, guard SessionDataGuard, managed ManagedConfigPaths, target string) error {
-	confineErr := confine(roots, target)
-	if confineErr == nil {
-		return guard.Check(target)
+	// Full-access (YOLO) sessions skip the workspace confinement for writers;
+	// the session-data guard below still protects Reasonix's own stores, so a
+	// YOLO write can touch any user directory but never the runtime internals.
+	if tool.ApprovalModeFrom(ctx) != tool.ApprovalModeYolo {
+		confineErr := confine(roots, target)
+		if confineErr == nil {
+			return guard.Check(target)
+		}
+		if !managed.Match(target) {
+			return confineErr
+		}
+		if err := guard.Check(target); err != nil {
+			return err
+		}
+		return managed.approve(ctx, target)
 	}
-	if !managed.Match(target) {
-		return confineErr
-	}
-	if err := guard.Check(target); err != nil {
-		return err
-	}
-	return managed.approve(ctx, target)
+	return guard.Check(target)
 }
 
 // confinePreview mirrors confineWrite for ctx-less diff previews: they read the

@@ -72,6 +72,7 @@ func (o *turnOrchestrator) runComposedSyntheticTurn(ctx context.Context, text st
 	c := o.c
 	ctx = agent.WithRawUserInput(ctx, text)
 	ctx = c.withPlannerTurnMetadata(ctx, text, true, c.messageCount())
+	ctx = tool.WithApprovalMode(ctx, c.ToolApprovalMode())
 	return c.runner.Run(ctx, c.ComposeSynthetic(text))
 }
 
@@ -299,6 +300,9 @@ func (o *turnOrchestrator) runOrchestratedTurn(ctx context.Context, turn orchest
 	if !turn.synthetic {
 		c.beginRecoveryEpisode()
 	}
+	// Carry the current tool-approval posture into the turn so write tools can
+	// relax workspace confinement for YOLO/full-access sessions in real time.
+	ctx = tool.WithApprovalMode(ctx, c.ToolApprovalMode())
 	err = c.runner.Run(ctx, modelInput)
 	c.persistGoalDeliveryCheckpoint()
 	if err == nil {

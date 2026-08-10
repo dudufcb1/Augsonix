@@ -128,9 +128,31 @@ func TestRunnerPostToolUseWarn(t *testing.T) {
 	var notified string
 	notify := func(msg string) { notified = msg }
 	r := NewRunner(hooks, "/tmp", spawner, notify)
-	r.PostToolUse(context.Background(), "bash", nil, "result")
+	msgs := r.PostToolUse(context.Background(), "bash", nil, "result")
 	if notified == "" {
 		t.Error("PostToolUse warn should notify")
+	}
+	if len(msgs) != 1 || !strings.Contains(msgs[0], "warning message") {
+		t.Errorf("PostToolUse warn should return the outcome message for the tool result, got %q", msgs)
+	}
+}
+
+func TestRunnerPostToolUseBlockNotifiesAndReturns(t *testing.T) {
+	hooks := []ResolvedHook{
+		{HookConfig: HookConfig{Command: "block"}, Event: PostToolUse},
+	}
+	spawner := func(_ context.Context, in SpawnInput) SpawnResult {
+		return SpawnResult{ExitCode: 2, Stderr: "limite duro excedido"}
+	}
+	var notified []string
+	notify := func(msg string) { notified = append(notified, msg) }
+	r := NewRunner(hooks, "/tmp", spawner, notify)
+	msgs := r.PostToolUse(context.Background(), "edit_file", nil, "ok")
+	if len(notified) != 1 {
+		t.Fatalf("PostToolUse block should notify once, got %d", len(notified))
+	}
+	if len(msgs) != 1 || !strings.Contains(msgs[0], "limite duro excedido") {
+		t.Errorf("PostToolUse block should return the outcome message, got %q", msgs)
 	}
 }
 

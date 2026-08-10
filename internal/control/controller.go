@@ -361,7 +361,7 @@ const (
 	ToolApprovalAsk     = "ask"
 	ToolApprovalAuto    = "auto"
 	ToolApprovalDontAsk = "dontAsk"
-	ToolApprovalYolo    = "yolo"
+	ToolApprovalYolo    = tool.ApprovalModeYolo
 )
 
 const (

@@ -786,12 +786,14 @@ func (a *Agent) finishToolExecution(ctx context.Context, plan *toolCallPlan) too
 	// Track skill/capability outcomes for Delivery gates.
 	a.noteCapabilityInvocation(call.Name, json.RawMessage(call.Arguments), err)
 	// Success and failure hooks observe the result after the tool ran. Use the
-	// real target name for proxied tools.
+	// real target name for proxied tools. Success notices are appended to the
+	// tool result so the model sees hook feedback (Claude-style).
+	var hookNotices []string
 	if a.hooks != nil {
 		if err != nil {
 			a.hooks.PostToolUseFailure(ctx, permName, permArgs, result, err)
 		} else {
-			a.hooks.PostToolUse(ctx, permName, permArgs, result)
+			hookNotices = a.hooks.PostToolUse(ctx, permName, permArgs, result)
 		}
 	}
 	// Always re-read after post hooks — partial writes and hook side effects can
@@ -828,6 +830,9 @@ func (a *Agent) finishToolExecution(ctx context.Context, plan *toolCallPlan) too
 		a.hooks.SubagentStop(ctx, result)
 	}
 	body, truncMsg := truncateToolOutput(result)
+	if len(hookNotices) > 0 {
+		body, truncMsg = attachHookNotices(body, hookNotices)
+	}
 	return toolOutcome{
 		output: body, images: images, truncated: truncMsg != "", truncMsg: truncMsg,
 		execution: execution, recoveryGeneration: recoveryGen,

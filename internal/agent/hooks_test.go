@@ -51,8 +51,9 @@ func (h *stubHooks) PreToolUse(_ context.Context, name string, _ json.RawMessage
 	return false, ""
 }
 
-func (h *stubHooks) PostToolUse(_ context.Context, name string, _ json.RawMessage, _ string) {
+func (h *stubHooks) PostToolUse(_ context.Context, name string, _ json.RawMessage, _ string) []string {
 	h.postSeen = append(h.postSeen, name)
+	return nil
 }
 
 func (h *stubHooks) PostToolUseFailure(_ context.Context, name string, _ json.RawMessage, _ string, _ error) {

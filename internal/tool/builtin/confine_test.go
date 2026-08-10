@@ -174,6 +174,22 @@ func TestWriteFileConfinement(t *testing.T) {
 	}
 }
 
+func TestWriteFileYoloBypassesWorkspaceConfinement(t *testing.T) {
+	root := t.TempDir()
+	w := writeFile{roots: realRoots([]string{root})}
+	ctx := tool.WithApprovalMode(context.Background(), tool.ApprovalModeYolo)
+
+	// Outside the roots, but the session is YOLO: the write is allowed.
+	out := filepath.Join(t.TempDir(), "out.txt")
+	args, _ := json.Marshal(map[string]string{"path": out, "content": "hi"})
+	if _, err := w.Execute(ctx, args); err != nil {
+		t.Fatalf("write outside root should pass in YOLO mode: %v", err)
+	}
+	if _, err := os.Stat(out); err != nil {
+		t.Errorf("file not created in YOLO mode: %v", err)
+	}
+}
+
 func TestWriteFileDefaultRootsDenyUserConfigUnlessAllowed(t *testing.T) {
 	home := isolateBuiltinTestUserState(t)
 
