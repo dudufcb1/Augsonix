@@ -1,8 +1,8 @@
 package openai
 
 import (
-	"bytes"
 	"encoding/json"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -32,19 +32,29 @@ func TestBuildRequestEmbedsImagesForVisionModel(t *testing.T) {
 	}
 }
 
-func TestBuildRequestSkipsImagesWithoutVision(t *testing.T) {
+func TestBuildRequestSavesImagesWithoutVision(t *testing.T) {
+	t.Chdir(t.TempDir())
 	c := &client{model: "deepseek-v4"} // vision unset
 	req := c.buildRequest(provider.Request{
 		Messages: []provider.Message{
 			{Role: provider.RoleUser, Content: "ignore the image", Images: []string{"data:image/png;base64,AAAA"}},
 		},
 	})
-	if s, ok := req.Messages[0].Content.(string); !ok || s != "ignore the image" {
+	s, ok := req.Messages[0].Content.(string)
+	if !ok {
 		t.Fatalf("non-vision content = %#v, want plain string", req.Messages[0].Content)
+	}
+	if !strings.Contains(s, "ignore the image") || !strings.Contains(s, "read_image") {
+		t.Fatalf("non-vision content = %q, want original text plus read_image note", s)
+	}
+	matches, err := filepath.Glob(filepath.Join(".reasonix", "attachments", "read-image-*"))
+	if err != nil || len(matches) != 1 {
+		t.Fatalf("expected one saved image in cwd, got %v (err %v)", matches, err)
 	}
 }
 
-func TestOfficialDeepSeekProviderWideVisionInputMatchesTextOnlyRequest(t *testing.T) {
+func TestOfficialDeepSeekProviderWideVisionInputSavesImageForTextModel(t *testing.T) {
+	t.Chdir(t.TempDir())
 	p, err := New(provider.Config{
 		Name:    "deepseek",
 		BaseURL: "https://api.deepseek.com",
@@ -70,12 +80,13 @@ func TestOfficialDeepSeekProviderWideVisionInputMatchesTextOnlyRequest(t *testin
 	if err != nil {
 		t.Fatalf("marshal text request: %v", err)
 	}
-	imageBody, err := json.Marshal(c.buildRequest(withImage))
-	if err != nil {
-		t.Fatalf("marshal image request: %v", err)
+	imageMsg := c.buildRequest(withImage).Messages[0]
+	s, ok := imageMsg.Content.(string)
+	if !ok || !strings.Contains(s, "describe this image") || !strings.Contains(s, "read_image") {
+		t.Fatalf("official DeepSeek image content = %#v, want text plus read_image note", imageMsg.Content)
 	}
-	if !bytes.Equal(imageBody, textBody) {
-		t.Fatalf("official DeepSeek image request changed provider-visible bytes:\ntext:  %s\nimage: %s", textBody, imageBody)
+	if strings.Contains(string(textBody), "read_image") {
+		t.Fatalf("text-only request must not carry the image note: %s", textBody)
 	}
 }
 

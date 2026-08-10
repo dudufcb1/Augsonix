@@ -1,0 +1,32 @@
+diff --git a/internal/control/refs.go b/internal/control/refs.go
+index 8e07d9b..0cc97bc 100644
+--- a/internal/control/refs.go
++++ b/internal/control/refs.go
+@@ -890,7 +890,11 @@ func (c *Controller) resolveRefs(ctx context.Context, line string, scopedOnly bo
+ 			}
+ 			appendRefBlock(&b, tag, `path="`+displayPath+`"`, text)
+ 		case refImage:
+-			appendRefBlock(&b, "image", `path="`+r.path+`"`, "[image attachment available at @"+r.path+"; sent as direct model image input only when the selected model supports vision. Text-only models can still use an available OCR/image/vision tool with this local path; image bytes are not inlined into prompt text.]")
++			note := "[image attachment available at @" + r.path + "; sent as direct model image input only when the selected model supports vision. Text-only models can still use an available OCR/image/vision tool with this local path; image bytes are not inlined into prompt text.]"
++			if !c.imageInputEnabled() {
++				note = fmt.Sprintf("[imagen adjunta en @%s; este modelo no soporta vision. Usa el CLI read_image %s para describirla; los bytes de la imagen no van en el texto del prompt.]", r.path, r.path)
++			}
++			appendRefBlock(&b, "image", `path="`+r.path+`"`, note)
+ 		}
+ 	}
+ 	return b.String(), errs
+diff --git a/internal/control/refs_test.go b/internal/control/refs_test.go
+index b4b5b84..3456a5e 100644
+--- a/internal/control/refs_test.go
++++ b/internal/control/refs_test.go
+@@ -245,8 +245,8 @@ func TestResolveRefsAttachmentKinds(t *testing.T) {
+ 	if !strings.Contains(block, `<image path="`+pngRef+`">`) {
+ 		t.Fatalf("expected png attachment to resolve as image block, got: %s", block)
+ 	}
+-	if !strings.Contains(block, "OCR/image/vision tool") || !strings.Contains(block, "image bytes are not inlined") {
+-		t.Fatalf("expected image attachment note to mention tool-readable path without inlined bytes, got: %s", block)
++	if !strings.Contains(block, "read_image") || !strings.Contains(block, "no soporta vision") {
++		t.Fatalf("expected image attachment note to name the read_image CLI for a text-only model, got: %s", block)
+ 	}
+ }
+ 

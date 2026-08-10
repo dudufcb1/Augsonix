@@ -245,8 +245,8 @@ func TestResolveRefsAttachmentKinds(t *testing.T) {
 	if !strings.Contains(block, `<image path="`+pngRef+`">`) {
 		t.Fatalf("expected png attachment to resolve as image block, got: %s", block)
 	}
-	if !strings.Contains(block, "OCR/image/vision tool") || !strings.Contains(block, "image bytes are not inlined") {
-		t.Fatalf("expected image attachment note to mention tool-readable path without inlined bytes, got: %s", block)
+	if !strings.Contains(block, "read_image") || !strings.Contains(block, "no soporta vision") {
+		t.Fatalf("expected image attachment note to name the read_image CLI for a text-only model, got: %s", block)
 	}
 }
 

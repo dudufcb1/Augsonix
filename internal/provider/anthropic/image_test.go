@@ -3,6 +3,7 @@ package anthropic
 import (
 	"context"
 	"encoding/json"
+	"strings"
 	"testing"
 
 	"reasonix/internal/provider"
@@ -25,7 +26,8 @@ func TestBuildRequestEmbedsImageBlockForVisionModel(t *testing.T) {
 	}
 }
 
-func TestBuildRequestSkipsImageBlockWithoutVision(t *testing.T) {
+func TestBuildRequestSavesImageBlockWithoutVision(t *testing.T) {
+	t.Chdir(t.TempDir())
 	c := &client{model: "claude-opus-4-8"} // vision unset
 	req := c.buildRequest(context.Background(), provider.Request{
 		Messages: []provider.Message{
@@ -33,8 +35,14 @@ func TestBuildRequestSkipsImageBlockWithoutVision(t *testing.T) {
 		},
 	})
 	blocks := req.Messages[0].Content
-	if len(blocks) != 1 || blocks[0].Type != "text" {
-		t.Fatalf("blocks = %+v, want [text] only when vision is off", blocks)
+	if len(blocks) != 2 || blocks[0].Type != "text" || blocks[1].Type != "text" {
+		t.Fatalf("blocks = %+v, want [text, read_image text note]", blocks)
+	}
+	if blocks[0].Text != "describe" {
+		t.Fatalf("first block = %q, want the original text", blocks[0].Text)
+	}
+	if !strings.Contains(blocks[1].Text, "read_image") {
+		t.Fatalf("second block = %q, want a read_image note", blocks[1].Text)
 	}
 }
 

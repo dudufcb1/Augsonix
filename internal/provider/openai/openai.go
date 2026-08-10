@@ -455,7 +455,7 @@ var bufPool = sync.Pool{
 }
 
 func (c *client) Stream(ctx context.Context, req provider.Request) (<-chan provider.Chunk, error) {
-	stream, err := c.openStream(ctx, c.chatURL, c.buildRequest(req), req.Tools)
+	stream, err := c.openStream(ctx, c.chatURL, c.buildRequest(req), req.Tools, req.SessionID)
 	if err != nil {
 		return nil, err
 	}
@@ -468,7 +468,7 @@ func (c *client) Stream(ctx context.Context, req provider.Request) (<-chan provi
 	return out, nil
 }
 
-func (c *client) openStream(ctx context.Context, targetURL string, wireReq chatRequest, tools []provider.ToolSchema) (<-chan provider.Chunk, error) {
+func (c *client) openStream(ctx context.Context, targetURL string, wireReq chatRequest, tools []provider.ToolSchema, sessionID string) (<-chan provider.Chunk, error) {
 	requestCtx := provider.WithRequestAttemptCounter(ctx)
 	buf := bufPool.Get().(*bytes.Buffer)
 	buf.Reset()
@@ -489,6 +489,7 @@ func (c *client) openStream(ctx context.Context, targetURL string, wireReq chatR
 		applyAPIKeyHeader(httpReq.Header, c.baseURL, c.apiKey)
 		httpReq.Header.Set("Accept", "text/event-stream")
 		applyCustomHeaders(httpReq.Header, c.headers)
+		ApplyOpenCodeSessionHeader(httpReq.Header, targetURL, sessionID)
 		return httpReq, nil
 	}
 	resp, err := provider.SendWithRetry(requestCtx, c.http, c.sendOpts(), newReq)
@@ -573,7 +574,7 @@ func (c *client) streamWithPrefixContinuation(ctx context.Context, req provider.
 		}
 
 		prefixReq := c.buildPrefixRequest(req, fullText.String(), fullReasoning.String())
-		next, err := c.openStream(ctx, c.prefixChatURL, prefixReq, req.Tools)
+		next, err := c.openStream(ctx, c.prefixChatURL, prefixReq, req.Tools, req.SessionID)
 		if err != nil {
 			emitUsageAndDone(ctx, out, totalUsage)
 			return
@@ -744,6 +745,8 @@ func (c *client) buildRequest(req provider.Request) chatRequest {
 			cm.ToolCalls = append(cm.ToolCalls, wire)
 		}
 		switch {
+		case m.Role == provider.RoleUser && len(m.Images) > 0 && !c.vision:
+			cm.Content = provider.SaveImagesForTextModel(m.Content, m.Images)
 		case c.vision && m.Role == provider.RoleUser && len(m.Images) > 0:
 			cm.Content = imageContentParts(m.Content, m.Images, c.visionDetail)
 		case m.Role != provider.RoleAssistant || len(cm.ToolCalls) == 0 || m.Content != "":

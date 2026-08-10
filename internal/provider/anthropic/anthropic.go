@@ -294,6 +294,7 @@ func (c *client) Stream(ctx context.Context, req provider.Request) (<-chan provi
 		}
 		httpReq.Header.Set("anthropic-version", anthropicVersion)
 		applyCustomHeaders(httpReq.Header, c.headers)
+		openai.ApplyOpenCodeSessionHeader(httpReq.Header, c.baseURL, req.SessionID)
 		return httpReq, nil
 	}
 	resp, err := provider.SendWithRetry(requestCtx, c.http, c.sendOpts(), newReq)
@@ -344,6 +345,10 @@ func (c *client) buildRequest(_ context.Context, req provider.Request) anthReque
 					if mt, data, ok := provider.ParseImageDataURL(url); ok {
 						appendBlocks("user", contentBlock{Type: "image", Source: &imageSource{Type: "base64", MediaType: mt, Data: data}})
 					}
+				}
+			} else if len(m.Images) > 0 {
+				if note := provider.SaveImagesForTextModel("", m.Images); note != "" {
+					appendBlocks("user", contentBlock{Type: "text", Text: note})
 				}
 			}
 		case provider.RoleTool:

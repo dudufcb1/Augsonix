@@ -1,0 +1,514 @@
+diff --git a/internal/agent/compact.go b/internal/agent/compact.go
+index 41295c1..f14f781 100644
+--- a/internal/agent/compact.go
++++ b/internal/agent/compact.go
+@@ -617,6 +617,7 @@ func (a *Agent) summarize(ctx context.Context, region []provider.Message, instru
+ 			{Role: provider.RoleUser, Content: renderTranscript(region)},
+ 		},
+ 		Temperature: provider.OptionalTemperature(a.temperature),
++		SessionID:   a.gatewaySessionID(),
+ 	})
+ 	if err != nil {
+ 		return "", usage, err
+diff --git a/internal/agent/coordinator.go b/internal/agent/coordinator.go
+index 5ed16db..fe5f62e 100644
+--- a/internal/agent/coordinator.go
++++ b/internal/agent/coordinator.go
+@@ -839,6 +839,7 @@ func (c *Coordinator) plan(ctx context.Context, input string) (string, error) {
+ 	ch, err := c.planner.Stream(planCtx, provider.Request{
+ 		Messages:    provider.ModelMessages(c.plannerSess.Messages),
+ 		Temperature: provider.OptionalTemperature(c.temperature),
++		SessionID:   c.executor.gatewaySessionID(),
+ 	})
+ 	if err != nil {
+ 		c.plannerSess.Replace(before)
+diff --git a/internal/agent/gateway_session.go b/internal/agent/gateway_session.go
+new file mode 100644
+index 0000000..dc2b33d
+--- /dev/null
++++ b/internal/agent/gateway_session.go
+@@ -0,0 +1,80 @@
++package agent
++
++import (
++	"path/filepath"
++	"strings"
++	"time"
++)
++
++// gatewaySessionID returns the stable logical-session identifier sent to
++// gateways that group requests by it (opencode.ai reads x-opencode-session;
++// the usage dashboard shows the last 8 chars of the stored value). The
++// project slug goes last so that tail is human-readable, prefixed by a
++// session timestamp for per-session stickiness. Empty omits the header.
++func (a *Agent) gatewaySessionID() string {
++	return gatewaySessionID(a.sessionPath, a.writeWorkspaceRoot)
++}
++
++func gatewaySessionID(sessionPath, workspaceRoot string) string {
++	slug := projectSlug(workspaceRoot)
++	if slug == "" {
++		return ""
++	}
++	ts := sessionTimestamp(sessionPath)
++	if ts == "" {
++		ts = time.Now().UTC().Format("01021504")
++	}
++	return "rx-" + ts + "-" + slug
++}
++
++// projectSlug condenses a workspace path into the first three letters of each
++// word of its basename (DeepSeek-Reasonix -> dep-rea), at most three words, so
++// the gateway dashboard tail stays short but recognizable.
++func projectSlug(workspaceRoot string) string {
++	base := strings.TrimSpace(filepath.Base(filepath.Clean(workspaceRoot)))
++	if base == "." || base == "/" || base == "" {
++		return ""
++	}
++	var words []string
++	for _, part := range splitNonAlnum(base) {
++		if part == "" {
++			continue
++		}
++		letters := []rune(strings.ToLower(part))
++		cut := len(letters)
++		if cut > 3 {
++			cut = 3
++		}
++		words = append(words, string(letters[:cut]))
++		if len(words) == 3 {
++			break
++		}
++	}
++	return strings.Join(words, "-")
++}
++
++// sessionTimestamp extracts MMDDHHMM from a session file basename shaped like
++// "20060102-150405.000000000-<model>.jsonl" (NewSessionPath). Empty when the
++// path does not carry a parseable timestamp.
++func sessionTimestamp(sessionPath string) string {
++	base := filepath.Base(sessionPath)
++	dot := strings.IndexByte(base, '.')
++	if dot > 0 {
++		base = base[:dot]
++	}
++	if len(base) < 15 {
++		return ""
++	}
++	t, err := time.Parse("20060102-150405", base[:15])
++	if err != nil {
++		return ""
++	}
++	return t.UTC().Format("01021504")
++}
++
++// splitNonAlnum splits s on every run of non-alphanumeric characters.
++func splitNonAlnum(s string) []string {
++	return strings.FieldsFunc(s, func(r rune) bool {
++		return !(r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9')
++	})
++}
+diff --git a/internal/agent/gateway_session_test.go b/internal/agent/gateway_session_test.go
+new file mode 100644
+index 0000000..67741d2
+--- /dev/null
++++ b/internal/agent/gateway_session_test.go
+@@ -0,0 +1,82 @@
++package agent
++
++import (
++	"strings"
++	"testing"
++)
++
++func TestGatewaySessionID(t *testing.T) {
++	cases := []struct {
++		name        string
++		sessionPath string
++		workspace   string
++		wantSlug    string
++		wantEmpty   bool
++	}{
++		{name: "project with dash words", sessionPath: "/s/20260808-180307.123456789-deepseek-v4-flash.jsonl", workspace: "/home/edugoat/Dev/DeepSeek-Reasonix", wantSlug: "dee-rea"},
++		{name: "single word", sessionPath: "/s/20260808-180307.123456789-deepseek-v4-flash.jsonl", workspace: "/home/edugoat/segurofeliz", wantSlug: "seg"},
++		{name: "kebab project", sessionPath: "/s/20260808-180307.123456789-deepseek-v4-flash.jsonl", workspace: "/media/edugoat/Proyectos/usage-tracker", wantSlug: "usa-tra"},
++		{name: "three words cap", sessionPath: "/s/20260808-180307.123456789-deepseek-v4-flash.jsonl", workspace: "/x/whatsapp-audio-transcriber", wantSlug: "wha-aud-tra"},
++		{name: "no workspace", sessionPath: "/s/20260808-180307.123456789-deepseek-v4-flash.jsonl", workspace: "", wantEmpty: true},
++		{name: "root workspace", sessionPath: "/s/20260808-180307.123456789-deepseek-v4-flash.jsonl", workspace: "/", wantEmpty: true},
++	}
++	for _, tc := range cases {
++		t.Run(tc.name, func(t *testing.T) {
++			got := gatewaySessionID(tc.sessionPath, tc.workspace)
++			if tc.wantEmpty {
++				if got != "" {
++					t.Fatalf("gatewaySessionID = %q, want empty", got)
++				}
++				return
++			}
++			if len(got) > 30 {
++				t.Fatalf("gatewaySessionID = %q, want <= 30 chars (gateway truncates)", got)
++			}
++			if got[:3] != "rx-" {
++				t.Fatalf("gatewaySessionID = %q, want rx- prefix", got)
++			}
++			// The project slug must be the visible tail: the opencode
++			// dashboard shows the last 8 chars of the stored value, so the
++			// final word of the slug must land in that window.
++			if !strings.HasSuffix(got, "-"+tc.wantSlug) {
++				t.Fatalf("gatewaySessionID = %q, want suffix -%s", got, tc.wantSlug)
++			}
++			lastWord := tc.wantSlug
++			if i := strings.LastIndexByte(lastWord, '-'); i >= 0 {
++				lastWord = lastWord[i+1:]
++			}
++			if tail := got[len(got)-8:]; !strings.Contains(tail, lastWord) {
++				t.Fatalf("gatewaySessionID tail = %q, want it to carry %q", tail, lastWord)
++			}
++		})
++	}
++}
++
++func TestSessionTimestamp(t *testing.T) {
++	got := sessionTimestamp("/x/20260809-000220.677640881-deepseek-v4-flash.jsonl")
++	if got != "08090002" {
++		t.Fatalf("sessionTimestamp = %q, want 08090002", got)
++	}
++	if v := sessionTimestamp("plain-name.jsonl"); v != "" {
++		t.Fatalf("sessionTimestamp(plain) = %q, want empty", v)
++	}
++	if v := sessionTimestamp(""); v != "" {
++		t.Fatalf("sessionTimestamp(empty) = %q, want empty", v)
++	}
++}
++
++func TestProjectSlug(t *testing.T) {
++	cases := map[string]string{
++		"/home/edugoat/Dev/DeepSeek-Reasonix": "dee-rea",
++		"DeepSeek-Reasonix":                   "dee-rea",
++		"segurofeliz":                         "seg",
++		"/x/whatsapp-audio-transcriber":       "wha-aud-tra",
++		"":                                    "",
++		"/":                                   "",
++	}
++	for in, want := range cases {
++		if got := projectSlug(in); got != want {
++			t.Fatalf("projectSlug(%q) = %q, want %q", in, got, want)
++		}
++	}
++}
+diff --git a/internal/agent/sampling_request.go b/internal/agent/sampling_request.go
+index b22998c..d9f35b7 100644
+--- a/internal/agent/sampling_request.go
++++ b/internal/agent/sampling_request.go
+@@ -41,6 +41,7 @@ func (a *Agent) prepareSamplingRequest(ctx context.Context) (samplingRequest, er
+ 		Temperature:    provider.OptionalTemperature(a.temperature),
+ 		ResponseFormat: responseFormatFromRequest(ctx),
+ 		EffortOverride: a.governorOverride(),
++		SessionID:      a.gatewaySessionID(),
+ 	}
+ 	// provider.request: the fully assembled request gets one last ruling
+ 	// (revalidated by the payload registry) before it goes on the wire.
+diff --git a/internal/provider/anthropic/anthropic.go b/internal/provider/anthropic/anthropic.go
+index ed41380..6bbffa5 100644
+--- a/internal/provider/anthropic/anthropic.go
++++ b/internal/provider/anthropic/anthropic.go
+@@ -294,6 +294,7 @@ func (c *client) Stream(ctx context.Context, req provider.Request) (<-chan provi
+ 		}
+ 		httpReq.Header.Set("anthropic-version", anthropicVersion)
+ 		applyCustomHeaders(httpReq.Header, c.headers)
++		openai.ApplyOpenCodeSessionHeader(httpReq.Header, c.baseURL, req.SessionID)
+ 		return httpReq, nil
+ 	}
+ 	resp, err := provider.SendWithRetry(requestCtx, c.http, c.sendOpts(), newReq)
+diff --git a/internal/provider/anthropic/session_header_test.go b/internal/provider/anthropic/session_header_test.go
+new file mode 100644
+index 0000000..6a76f49
+--- /dev/null
++++ b/internal/provider/anthropic/session_header_test.go
+@@ -0,0 +1,82 @@
++package anthropic
++
++import (
++	"context"
++	"io"
++	"net/http"
++	"strings"
++	"testing"
++
++	"reasonix/internal/provider"
++)
++
++// captureRoundTripper records the outgoing request and replies with a canned
++// SSE stream, so header behavior can be asserted without real network access.
++type captureRoundTripper struct {
++	got *http.Request
++}
++
++func (c *captureRoundTripper) RoundTrip(req *http.Request) (*http.Response, error) {
++	c.got = req
++	return &http.Response{
++		StatusCode: http.StatusOK,
++		Header:     http.Header{"Content-Type": []string{"text/event-stream"}},
++		Body:       io.NopCloser(strings.NewReader(sseFixture)),
++		Request:    req,
++	}, nil
++}
++
++func TestStreamSendsOpenCodeSessionHeader(t *testing.T) {
++	rt := &captureRoundTripper{}
++	cl := &client{
++		name:    "opencode-zen-anthropic",
++		baseURL: "https://opencode.ai/zen",
++		model:   "claude-sonnet-4-6",
++		apiKey:  "real-key",
++		http:    &http.Client{Transport: rt},
++	}
++	ch, err := cl.Stream(context.Background(), provider.Request{
++		Messages:  []provider.Message{{Role: provider.RoleUser, Content: "hi"}},
++		SessionID: "rx-08090022-dee-rea",
++	})
++	if err != nil {
++		t.Fatalf("Stream: %v", err)
++	}
++	for chunk := range ch {
++		if chunk.Type == provider.ChunkError {
++			t.Fatalf("stream error: %v", chunk.Err)
++		}
++	}
++	if rt.got == nil {
++		t.Fatal("no request captured")
++	}
++	if got := rt.got.Header.Get("x-opencode-session"); got != "rx-08090022-dee-rea" {
++		t.Fatalf("x-opencode-session = %q, want the request SessionID", got)
++	}
++}
++
++func TestStreamOmitsOpenCodeSessionHeaderForOtherHosts(t *testing.T) {
++	rt := &captureRoundTripper{}
++	cl := &client{
++		name:    "plain",
++		baseURL: "https://api.anthropic.com",
++		model:   "claude-sonnet-4-6",
++		apiKey:  "real-key",
++		http:    &http.Client{Transport: rt},
++	}
++	ch, err := cl.Stream(context.Background(), provider.Request{
++		Messages:  []provider.Message{{Role: provider.RoleUser, Content: "hi"}},
++		SessionID: "rx-08090022-dee-rea",
++	})
++	if err != nil {
++		t.Fatalf("Stream: %v", err)
++	}
++	for chunk := range ch {
++		if chunk.Type == provider.ChunkError {
++			t.Fatalf("stream error: %v", chunk.Err)
++		}
++	}
++	if got := rt.got.Header.Get("x-opencode-session"); got != "" {
++		t.Fatalf("x-opencode-session = %q on non-gateway host, want omitted", got)
++	}
++}
+diff --git a/internal/provider/openai/host.go b/internal/provider/openai/host.go
+index ec7eb1e..f69cc58 100644
+--- a/internal/provider/openai/host.go
++++ b/internal/provider/openai/host.go
+@@ -48,6 +48,12 @@ func IsOpenAI(baseURL string) bool {
+ 	return strings.EqualFold(u.Hostname(), "api.openai.com")
+ }
+ 
++// IsOpenCode reports whether baseURL points at the opencode.ai gateway
++// (opencode.ai or any *.opencode.ai subdomain, e.g. the zen/go relays).
++func IsOpenCode(baseURL string) bool {
++	return matchesVendorHost(baseURL, "opencode.ai", "opencode.ai")
++}
++
+ // deepSeekPrefixChatURL returns the official Beta chat endpoint that enables
+ // assistant-prefix completion. Derive it only from a URL already hosted by
+ // DeepSeek: custom gateways may opt into the DeepSeek reasoning wire shape, but
+diff --git a/internal/provider/openai/openai.go b/internal/provider/openai/openai.go
+index 24b9ac6..a4dbad8 100644
+--- a/internal/provider/openai/openai.go
++++ b/internal/provider/openai/openai.go
+@@ -455,7 +455,7 @@ var bufPool = sync.Pool{
+ }
+ 
+ func (c *client) Stream(ctx context.Context, req provider.Request) (<-chan provider.Chunk, error) {
+-	stream, err := c.openStream(ctx, c.chatURL, c.buildRequest(req), req.Tools)
++	stream, err := c.openStream(ctx, c.chatURL, c.buildRequest(req), req.Tools, req.SessionID)
+ 	if err != nil {
+ 		return nil, err
+ 	}
+@@ -468,7 +468,7 @@ func (c *client) Stream(ctx context.Context, req provider.Request) (<-chan provi
+ 	return out, nil
+ }
+ 
+-func (c *client) openStream(ctx context.Context, targetURL string, wireReq chatRequest, tools []provider.ToolSchema) (<-chan provider.Chunk, error) {
++func (c *client) openStream(ctx context.Context, targetURL string, wireReq chatRequest, tools []provider.ToolSchema, sessionID string) (<-chan provider.Chunk, error) {
+ 	requestCtx := provider.WithRequestAttemptCounter(ctx)
+ 	buf := bufPool.Get().(*bytes.Buffer)
+ 	buf.Reset()
+@@ -489,6 +489,7 @@ func (c *client) openStream(ctx context.Context, targetURL string, wireReq chatR
+ 		applyAPIKeyHeader(httpReq.Header, c.baseURL, c.apiKey)
+ 		httpReq.Header.Set("Accept", "text/event-stream")
+ 		applyCustomHeaders(httpReq.Header, c.headers)
++		ApplyOpenCodeSessionHeader(httpReq.Header, targetURL, sessionID)
+ 		return httpReq, nil
+ 	}
+ 	resp, err := provider.SendWithRetry(requestCtx, c.http, c.sendOpts(), newReq)
+@@ -573,7 +574,7 @@ func (c *client) streamWithPrefixContinuation(ctx context.Context, req provider.
+ 		}
+ 
+ 		prefixReq := c.buildPrefixRequest(req, fullText.String(), fullReasoning.String())
+-		next, err := c.openStream(ctx, c.prefixChatURL, prefixReq, req.Tools)
++		next, err := c.openStream(ctx, c.prefixChatURL, prefixReq, req.Tools, req.SessionID)
+ 		if err != nil {
+ 			emitUsageAndDone(ctx, out, totalUsage)
+ 			return
+diff --git a/internal/provider/openai/session_header.go b/internal/provider/openai/session_header.go
+new file mode 100644
+index 0000000..f54ba01
+--- /dev/null
++++ b/internal/provider/openai/session_header.go
+@@ -0,0 +1,13 @@
++package openai
++
++import "net/http"
++
++// ApplyOpenCodeSessionHeader forwards the logical-session identifier to
++// gateways that group requests by it. opencode.ai reads x-opencode-session
++// and its usage dashboard shows the last 8 chars of the stored value, so
++// callers pass a stable per-session ID whose tail is human-readable.
++func ApplyOpenCodeSessionHeader(h http.Header, targetURL, sessionID string) {
++	if IsOpenCode(targetURL) && sessionID != "" {
++		h.Set("x-opencode-session", sessionID)
++	}
++}
+diff --git a/internal/provider/openai/session_header_test.go b/internal/provider/openai/session_header_test.go
+new file mode 100644
+index 0000000..2a349b8
+--- /dev/null
++++ b/internal/provider/openai/session_header_test.go
+@@ -0,0 +1,111 @@
++package openai
++
++import (
++	"context"
++	"io"
++	"net/http"
++	"strings"
++	"testing"
++
++	"reasonix/internal/provider"
++)
++
++// captureRoundTripper records the outgoing request and replies with a canned
++// SSE stream, so header behavior can be asserted without real network access.
++type captureRoundTripper struct {
++	got *http.Request
++}
++
++func (c *captureRoundTripper) RoundTrip(req *http.Request) (*http.Response, error) {
++	c.got = req
++	return &http.Response{
++		StatusCode: http.StatusOK,
++		Header:     http.Header{"Content-Type": []string{"text/event-stream"}},
++		Body:       io.NopCloser(strings.NewReader("data: {\"choices\":[{\"delta\":{\"content\":\"ok\"}}]}\n\ndata: [DONE]\n\n")),
++		Request:    req,
++	}, nil
++}
++
++func TestStreamSendsOpenCodeSessionHeader(t *testing.T) {
++	rt := &captureRoundTripper{}
++	p, err := New(provider.Config{
++		Name:    "opencode-go",
++		BaseURL: "https://opencode.ai/zen/go/v1",
++		Model:   "deepseek-v4-flash",
++		APIKey:  "real-key",
++	})
++	if err != nil {
++		t.Fatalf("New: %v", err)
++	}
++	cl := p.(*client)
++	cl.http = &http.Client{Transport: rt}
++
++	ch, err := cl.Stream(context.Background(), provider.Request{
++		Messages:  []provider.Message{{Role: provider.RoleUser, Content: "hi"}},
++		SessionID: "rx-08090022-dee-rea",
++	})
++	if err != nil {
++		t.Fatalf("Stream: %v", err)
++	}
++	for chunk := range ch {
++		if chunk.Type == provider.ChunkError {
++			t.Fatalf("stream error: %v", chunk.Err)
++		}
++	}
++	if rt.got == nil {
++		t.Fatal("no request captured")
++	}
++	if got := rt.got.Header.Get("x-opencode-session"); got != "rx-08090022-dee-rea" {
++		t.Fatalf("x-opencode-session = %q, want the request SessionID", got)
++	}
++}
++
++func TestStreamOmitsOpenCodeSessionHeaderForOtherHosts(t *testing.T) {
++	rt := &captureRoundTripper{}
++	p, err := New(provider.Config{
++		Name:    "plain",
++		BaseURL: "https://api.example.com/v1",
++		Model:   "model-a",
++		APIKey:  "real-key",
++	})
++	if err != nil {
++		t.Fatalf("New: %v", err)
++	}
++	cl := p.(*client)
++	cl.http = &http.Client{Transport: rt}
++
++	ch, err := cl.Stream(context.Background(), provider.Request{
++		Messages:  []provider.Message{{Role: provider.RoleUser, Content: "hi"}},
++		SessionID: "rx-08090022-dee-rea",
++	})
++	if err != nil {
++		t.Fatalf("Stream: %v", err)
++	}
++	for chunk := range ch {
++		if chunk.Type == provider.ChunkError {
++			t.Fatalf("stream error: %v", chunk.Err)
++		}
++	}
++	if got := rt.got.Header.Get("x-opencode-session"); got != "" {
++		t.Fatalf("x-opencode-session = %q on non-gateway host, want omitted", got)
++	}
++}
++
++func TestIsOpenCode(t *testing.T) {
++	cases := map[string]bool{
++		"https://opencode.ai/zen/go/v1": true,
++		"https://opencode.ai/zen/v1":    true,
++		"https://api.opencode.ai/zen":   true,
++		"https://opencode.ai":           true,
++		"https://api.deepseek.com":      false,
++		"https://api.openai.com/v1":     false,
++		"https://opencode.example.com":  false,
++		"not a url":                     false,
++		"":                              false,
++	}
++	for in, want := range cases {
++		if got := IsOpenCode(in); got != want {
++			t.Fatalf("IsOpenCode(%q) = %v, want %v", in, got, want)
++		}
++	}
++}
+diff --git a/internal/provider/provider.go b/internal/provider/provider.go
+index 3cf5ac3..5ce9aeb 100644
+--- a/internal/provider/provider.go
++++ b/internal/provider/provider.go
+@@ -221,6 +221,7 @@ type Request struct {
+ 	// entirely — the common path must stay byte-stable for prompt caching.
+ 	ResponseFormat *ResponseFormat `json:"ResponseFormat,omitempty"`
+ 	EffortOverride string          `json:"EffortOverride,omitempty"` // per-call reasoning-depth override; adapters apply it only when the endpoint's effort vocabulary accepts it
++	SessionID      string          `json:"SessionID,omitempty"`      // stable gateway session id (x-opencode-session); empty omits the header
+ }
+ 
+ // ResponseFormat asks a provider to constrain its output shape.

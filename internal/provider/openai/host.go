@@ -48,6 +48,12 @@ func IsOpenAI(baseURL string) bool {
 	return strings.EqualFold(u.Hostname(), "api.openai.com")
 }
 
+// IsOpenCode reports whether baseURL points at the opencode.ai gateway
+// (opencode.ai or any *.opencode.ai subdomain, e.g. the zen/go relays).
+func IsOpenCode(baseURL string) bool {
+	return matchesVendorHost(baseURL, "opencode.ai", "opencode.ai")
+}
+
 // deepSeekPrefixChatURL returns the official Beta chat endpoint that enables
 // assistant-prefix completion. Derive it only from a URL already hosted by
 // DeepSeek: custom gateways may opt into the DeepSeek reasoning wire shape, but

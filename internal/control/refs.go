@@ -890,7 +890,11 @@ func (c *Controller) resolveRefs(ctx context.Context, line string, scopedOnly bo
 			}
 			appendRefBlock(&b, tag, `path="`+displayPath+`"`, text)
 		case refImage:
-			appendRefBlock(&b, "image", `path="`+r.path+`"`, "[image attachment available at @"+r.path+"; sent as direct model image input only when the selected model supports vision. Text-only models can still use an available OCR/image/vision tool with this local path; image bytes are not inlined into prompt text.]")
+			note := "[image attachment available at @" + r.path + "; sent as direct model image input only when the selected model supports vision. Text-only models can still use an available OCR/image/vision tool with this local path; image bytes are not inlined into prompt text.]"
+			if !c.imageInputEnabled() {
+				note = fmt.Sprintf("[imagen adjunta en @%s; este modelo no soporta vision. Usa el CLI read_image %s para describirla; los bytes de la imagen no van en el texto del prompt.]", r.path, r.path)
+			}
+			appendRefBlock(&b, "image", `path="`+r.path+`"`, note)
 		}
 	}
 	return b.String(), errs

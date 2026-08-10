@@ -839,6 +839,7 @@ func (c *Coordinator) plan(ctx context.Context, input string) (string, error) {
 	ch, err := c.planner.Stream(planCtx, provider.Request{
 		Messages:    provider.ModelMessages(c.plannerSess.Messages),
 		Temperature: provider.OptionalTemperature(c.temperature),
+		SessionID:   c.executor.gatewaySessionID(),
 	})
 	if err != nil {
 		c.plannerSess.Replace(before)

@@ -1,0 +1,276 @@
+diff --git a/internal/provider/anthropic/anthropic.go b/internal/provider/anthropic/anthropic.go
+index 3d4de03..ed41380 100644
+--- a/internal/provider/anthropic/anthropic.go
++++ b/internal/provider/anthropic/anthropic.go
+@@ -345,6 +345,10 @@ func (c *client) buildRequest(_ context.Context, req provider.Request) anthReque
+ 						appendBlocks("user", contentBlock{Type: "image", Source: &imageSource{Type: "base64", MediaType: mt, Data: data}})
+ 					}
+ 				}
++			} else if len(m.Images) > 0 {
++				if note := provider.SaveImagesForTextModel("", m.Images); note != "" {
++					appendBlocks("user", contentBlock{Type: "text", Text: note})
++				}
+ 			}
+ 		case provider.RoleTool:
+ 			content := m.Content
+diff --git a/internal/provider/anthropic/image_test.go b/internal/provider/anthropic/image_test.go
+index 30ee699..fef2fd1 100644
+--- a/internal/provider/anthropic/image_test.go
++++ b/internal/provider/anthropic/image_test.go
+@@ -3,6 +3,7 @@ package anthropic
+ import (
+ 	"context"
+ 	"encoding/json"
++	"strings"
+ 	"testing"
+ 
+ 	"reasonix/internal/provider"
+@@ -25,7 +26,8 @@ func TestBuildRequestEmbedsImageBlockForVisionModel(t *testing.T) {
+ 	}
+ }
+ 
+-func TestBuildRequestSkipsImageBlockWithoutVision(t *testing.T) {
++func TestBuildRequestSavesImageBlockWithoutVision(t *testing.T) {
++	t.Chdir(t.TempDir())
+ 	c := &client{model: "claude-opus-4-8"} // vision unset
+ 	req := c.buildRequest(context.Background(), provider.Request{
+ 		Messages: []provider.Message{
+@@ -33,8 +35,14 @@ func TestBuildRequestSkipsImageBlockWithoutVision(t *testing.T) {
+ 		},
+ 	})
+ 	blocks := req.Messages[0].Content
+-	if len(blocks) != 1 || blocks[0].Type != "text" {
+-		t.Fatalf("blocks = %+v, want [text] only when vision is off", blocks)
++	if len(blocks) != 2 || blocks[0].Type != "text" || blocks[1].Type != "text" {
++		t.Fatalf("blocks = %+v, want [text, read_image text note]", blocks)
++	}
++	if blocks[0].Text != "describe" {
++		t.Fatalf("first block = %q, want the original text", blocks[0].Text)
++	}
++	if !strings.Contains(blocks[1].Text, "read_image") {
++		t.Fatalf("second block = %q, want a read_image note", blocks[1].Text)
+ 	}
+ }
+ 
+diff --git a/internal/provider/media_fallback.go b/internal/provider/media_fallback.go
+new file mode 100644
+index 0000000..509c2cf
+--- /dev/null
++++ b/internal/provider/media_fallback.go
+@@ -0,0 +1,91 @@
++package provider
++
++import (
++	"encoding/base64"
++	"fmt"
++	"os"
++	"path/filepath"
++	"strings"
++	"sync/atomic"
++	"time"
++)
++
++// media_fallback.go — text-only model support for attached images.
++//
++// Providers that cannot send images (vision off) used to drop them silently,
++// leaving a text-only model blind to an attached screenshot. Instead we save
++// the bytes to disk (best effort) and rewrite the user turn with a note that
++// points the model at the saved path so it can run the `read_image` CLI on it.
++
++const (
++	maxFallbackImageBytes = 10 * 1024 * 1024
++	fallbackAttachments   = ".reasonix" + string(filepath.Separator) + "attachments"
++)
++
++var fallbackSeq atomic.Uint64
++
++// SaveImagesForTextModel writes unsupported image data URLs to disk and
++// returns content with a note pointing at each saved path for the read_image
++// CLI. Failures drop the images silently, matching the previous no-vision
++// behaviour; content itself is preserved.
++func SaveImagesForTextModel(content string, images []string) string {
++	var notes []string
++	for _, dataURL := range images {
++		if path := saveFallbackImage(dataURL); path != "" {
++			notes = append(notes, fmt.Sprintf("[imagen guardada en %s. Usa el CLI read_image %s para verla.]", path, path))
++		}
++	}
++	if len(notes) == 0 {
++		return content
++	}
++	if strings.TrimSpace(content) == "" {
++		return strings.Join(notes, "\n")
++	}
++	return content + "\n\n" + strings.Join(notes, "\n")
++}
++
++func saveFallbackImage(dataURL string) string {
++	mediaType, payload, ok := ParseImageDataURL(dataURL)
++	if !ok {
++		return ""
++	}
++	ext := fallbackImageExt(mediaType)
++	if ext == "" {
++		return ""
++	}
++	raw, err := base64.StdEncoding.DecodeString(payload)
++	if err != nil || len(raw) == 0 || len(raw) > maxFallbackImageBytes {
++		return ""
++	}
++	path, err := writeFallbackImage(raw, ext)
++	if err != nil {
++		return ""
++	}
++	return filepath.ToSlash(path)
++}
++
++func writeFallbackImage(raw []byte, ext string) (string, error) {
++	dir := fallbackAttachments
++	if err := os.MkdirAll(dir, 0o755); err != nil {
++		dir = os.TempDir()
++	}
++	seq := fallbackSeq.Add(1)
++	name := fmt.Sprintf("read-image-%d-%06d%s", time.Now().UnixMilli(), seq, ext)
++	return filepath.Join(dir, name), os.WriteFile(filepath.Join(dir, name), raw, 0o644)
++}
++
++func fallbackImageExt(mediaType string) string {
++	switch strings.ToLower(strings.TrimSpace(mediaType)) {
++	case "image/png":
++		return ".png"
++	case "image/jpeg":
++		return ".jpg"
++	case "image/gif":
++		return ".gif"
++	case "image/webp":
++		return ".webp"
++	case "image/bmp":
++		return ".bmp"
++	}
++	return ""
++}
+diff --git a/internal/provider/media_fallback_test.go b/internal/provider/media_fallback_test.go
+new file mode 100644
+index 0000000..a8a49d2
+--- /dev/null
++++ b/internal/provider/media_fallback_test.go
+@@ -0,0 +1,40 @@
++package provider
++
++import (
++	"path/filepath"
++	"strings"
++	"testing"
++)
++
++const testPNGDataURL = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg=="
++
++func TestSaveImagesForTextModelWritesFileAndNotesPath(t *testing.T) {
++	t.Chdir(t.TempDir())
++	got := SaveImagesForTextModel("hola", []string{testPNGDataURL})
++	if !strings.Contains(got, "hola") {
++		t.Fatalf("expected original content preserved, got %q", got)
++	}
++	if !strings.Contains(got, "read_image") {
++		t.Fatalf("expected read_image hint, got %q", got)
++	}
++	matches, err := filepath.Glob(filepath.Join(".reasonix", "attachments", "read-image-*.png"))
++	if err != nil || len(matches) != 1 {
++		t.Fatalf("expected one saved image in cwd, got %v (err %v)", matches, err)
++	}
++	if !strings.Contains(got, filepath.ToSlash(matches[0])) {
++		t.Fatalf("expected note to mention %q, got %q", matches[0], got)
++	}
++}
++
++func TestSaveImagesForTextModelFallsBackSilently(t *testing.T) {
++	t.Chdir(t.TempDir())
++	if got := SaveImagesForTextModel("texto", nil); got != "texto" {
++		t.Fatalf("no images: expected input unchanged, got %q", got)
++	}
++	if got := SaveImagesForTextModel("texto", []string{"not-a-data-url"}); got != "texto" {
++		t.Fatalf("bad data url: expected input unchanged, got %q", got)
++	}
++	if got := SaveImagesForTextModel("texto", []string{"data:text/plain;base64,aGVsbG8="}); got != "texto" {
++		t.Fatalf("non-image mime: expected input unchanged, got %q", got)
++	}
++}
+diff --git a/internal/provider/openai/image_test.go b/internal/provider/openai/image_test.go
+index 32ad5b7..c288570 100644
+--- a/internal/provider/openai/image_test.go
++++ b/internal/provider/openai/image_test.go
+@@ -1,8 +1,8 @@
+ package openai
+ 
+ import (
+-	"bytes"
+ 	"encoding/json"
++	"path/filepath"
+ 	"strings"
+ 	"testing"
+ 
+@@ -32,19 +32,29 @@ func TestBuildRequestEmbedsImagesForVisionModel(t *testing.T) {
+ 	}
+ }
+ 
+-func TestBuildRequestSkipsImagesWithoutVision(t *testing.T) {
++func TestBuildRequestSavesImagesWithoutVision(t *testing.T) {
++	t.Chdir(t.TempDir())
+ 	c := &client{model: "deepseek-v4"} // vision unset
+ 	req := c.buildRequest(provider.Request{
+ 		Messages: []provider.Message{
+ 			{Role: provider.RoleUser, Content: "ignore the image", Images: []string{"data:image/png;base64,AAAA"}},
+ 		},
+ 	})
+-	if s, ok := req.Messages[0].Content.(string); !ok || s != "ignore the image" {
++	s, ok := req.Messages[0].Content.(string)
++	if !ok {
+ 		t.Fatalf("non-vision content = %#v, want plain string", req.Messages[0].Content)
+ 	}
++	if !strings.Contains(s, "ignore the image") || !strings.Contains(s, "read_image") {
++		t.Fatalf("non-vision content = %q, want original text plus read_image note", s)
++	}
++	matches, err := filepath.Glob(filepath.Join(".reasonix", "attachments", "read-image-*"))
++	if err != nil || len(matches) != 1 {
++		t.Fatalf("expected one saved image in cwd, got %v (err %v)", matches, err)
++	}
+ }
+ 
+-func TestOfficialDeepSeekProviderWideVisionInputMatchesTextOnlyRequest(t *testing.T) {
++func TestOfficialDeepSeekProviderWideVisionInputSavesImageForTextModel(t *testing.T) {
++	t.Chdir(t.TempDir())
+ 	p, err := New(provider.Config{
+ 		Name:    "deepseek",
+ 		BaseURL: "https://api.deepseek.com",
+@@ -70,12 +80,13 @@ func TestOfficialDeepSeekProviderWideVisionInputMatchesTextOnlyRequest(t *testin
+ 	if err != nil {
+ 		t.Fatalf("marshal text request: %v", err)
+ 	}
+-	imageBody, err := json.Marshal(c.buildRequest(withImage))
+-	if err != nil {
+-		t.Fatalf("marshal image request: %v", err)
++	imageMsg := c.buildRequest(withImage).Messages[0]
++	s, ok := imageMsg.Content.(string)
++	if !ok || !strings.Contains(s, "describe this image") || !strings.Contains(s, "read_image") {
++		t.Fatalf("official DeepSeek image content = %#v, want text plus read_image note", imageMsg.Content)
+ 	}
+-	if !bytes.Equal(imageBody, textBody) {
+-		t.Fatalf("official DeepSeek image request changed provider-visible bytes:\ntext:  %s\nimage: %s", textBody, imageBody)
++	if strings.Contains(string(textBody), "read_image") {
++		t.Fatalf("text-only request must not carry the image note: %s", textBody)
+ 	}
+ }
+ 
+diff --git a/internal/provider/openai/openai.go b/internal/provider/openai/openai.go
+index 77da514..24b9ac6 100644
+--- a/internal/provider/openai/openai.go
++++ b/internal/provider/openai/openai.go
+@@ -744,6 +744,8 @@ func (c *client) buildRequest(req provider.Request) chatRequest {
+ 			cm.ToolCalls = append(cm.ToolCalls, wire)
+ 		}
+ 		switch {
++		case m.Role == provider.RoleUser && len(m.Images) > 0 && !c.vision:
++			cm.Content = provider.SaveImagesForTextModel(m.Content, m.Images)
+ 		case c.vision && m.Role == provider.RoleUser && len(m.Images) > 0:
+ 			cm.Content = imageContentParts(m.Content, m.Images, c.visionDetail)
+ 		case m.Role != provider.RoleAssistant || len(cm.ToolCalls) == 0 || m.Content != "":

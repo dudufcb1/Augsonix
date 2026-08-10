@@ -221,6 +221,7 @@ type Request struct {
 	// entirely — the common path must stay byte-stable for prompt caching.
 	ResponseFormat *ResponseFormat `json:"ResponseFormat,omitempty"`
 	EffortOverride string          `json:"EffortOverride,omitempty"` // per-call reasoning-depth override; adapters apply it only when the endpoint's effort vocabulary accepts it
+	SessionID      string          `json:"SessionID,omitempty"`      // stable gateway session id (x-opencode-session); empty omits the header
 }
 
 // ResponseFormat asks a provider to constrain its output shape.

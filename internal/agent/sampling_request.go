@@ -41,6 +41,7 @@ func (a *Agent) prepareSamplingRequest(ctx context.Context) (samplingRequest, er
 		Temperature:    provider.OptionalTemperature(a.temperature),
 		ResponseFormat: responseFormatFromRequest(ctx),
 		EffortOverride: a.governorOverride(),
+		SessionID:      a.gatewaySessionID(),
 	}
 	// provider.request: the fully assembled request gets one last ruling
 	// (revalidated by the payload registry) before it goes on the wire.
