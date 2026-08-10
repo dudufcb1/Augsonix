@@ -215,6 +215,14 @@ func build(ctx context.Context, opts Options) (*BuildResult, error) {
 		stderr = os.Stderr
 	}
 	root := resolveWorkspaceRoot(opts.WorkspaceRoot)
+	// launchWD es el folder desde donde el usuario LANZÓ reasonix (el cwd del
+	// proceso, ya chdir'ed a --dir si vino). Las tools (bash, rutas relativas)
+	// trabajan contra este, para que "pwd" y las rutas relativas del usuario
+	// coincidan con su ubicación real y no con el git root más cercano.
+	launchWD, err := os.Getwd()
+	if err != nil {
+		launchWD = root
+	}
 	additionalDirs, err := normalizeAdditionalDirs(root, opts.AdditionalDirs)
 	if err != nil {
 		return nil, err
@@ -678,7 +686,7 @@ func build(ctx context.Context, opts Options) (*BuildResult, error) {
 	// startup built-ins. Do not pass that filtered empty slice to addBuiltins,
 	// where an empty list intentionally means "all built-ins".
 	if !tokenEconomy || len(cfg.Tools.Enabled) == 0 || len(enabledBuiltins) > 0 {
-		addBuiltins(reg, enabledBuiltins, writeRoots, bashSpec, bashTimeout, searchSpec, stderr, root, proxySpec, forbidReadRoots, readPathResolver, sessionGuard, managedConfig, opts.FileOverlay, opts.TerminalRunner, sessionTemp, fileWriteReceipt)
+		addBuiltins(reg, enabledBuiltins, writeRoots, bashSpec, bashTimeout, searchSpec, stderr, launchWD, proxySpec, forbidReadRoots, readPathResolver, sessionGuard, managedConfig, opts.FileOverlay, opts.TerminalRunner, sessionTemp, fileWriteReceipt)
 	}
 	// Use the caller-supplied shared host when set, so controllers for the same
 	// workspace root reuse running MCP processes (e.g. one CodeGraph daemon
