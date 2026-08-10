@@ -871,16 +871,17 @@ func (m chatTUI) Init() tea.Cmd {
 }
 
 // windowTitle is the terminal window title: "RNX - <carpeta base del
-// workspace>", p.ej. "RNX - Asistente" para ~/asistente. La carpeta base se
-// lee del workspace root (no del path completo); fallback al cwd.
+// workspace>", p.ej. "RNX - voz-terminal" al abrir en ~/asistente/voz-terminal.
+// Usa el cwd del proceso (donde se LANZÓ reasonix), no el workspace root
+// resuelto (que sube al git root / .reasonix más cercano y falsea el título
+// cuando abres desde un subdirectorio). WorkspaceRoot solo como fallback si
+// Getwd falla.
 func (m chatTUI) windowTitle() string {
-	root := m.ctrl.WorkspaceRoot()
-	if root == "" {
-		if wd, err := os.Getwd(); err == nil {
-			root = wd
-		}
+	wd, err := os.Getwd()
+	if err != nil {
+		wd = m.ctrl.WorkspaceRoot()
 	}
-	base := filepath.Base(root)
+	base := filepath.Base(wd)
 	if base == "." || base == "/" || base == "" {
 		base = "reasonix"
 	}

@@ -3337,17 +3337,21 @@ func TestChatTUIWindowTitle(t *testing.T) {
 		WorkspaceRoot: "/home/edugoat/asistente",
 		ModelRef:      "test/model",
 	})
-	if got := m.windowTitle(); got != "RNX - asistente" {
-		t.Fatalf("windowTitle = %q, want %q", got, "RNX - asistente")
+
+	// El titulo usa el cwd real del proceso (donde se LANZO reasonix), no el
+	// workspace root resuelto: abrir en ~/asistente/voz-terminal debe decir
+	// "RNX - voz-terminal", no "RNX - asistente".
+	oldWd, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
 	}
-	// Root vacio: el fallback usa el cwd; no debe paniquear y debe llevar prefijo.
-	m.ctrl = control.New(control.Options{
-		Runner: &recordingTurnRunner{},
-		Sink:   event.FuncSink(func(e event.Event) { events <- e }),
-		ModelRef: "test/model",
-	})
-	if got := m.windowTitle(); !strings.HasPrefix(got, "RNX - ") {
-		t.Fatalf("windowTitle con root vacio = %q, debe llevar prefijo RNX", got)
+	tmpDir := t.TempDir()
+	if err := os.Chdir(tmpDir); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chdir(oldWd) })
+	if got, want := m.windowTitle(), "RNX - "+filepath.Base(tmpDir); got != want {
+		t.Fatalf("windowTitle = %q, want %q", got, want)
 	}
 }
 
