@@ -870,6 +870,30 @@ func (m chatTUI) Init() tea.Cmd {
 	)
 }
 
+// windowTitle is the terminal window title: "RNX - <carpeta base del
+// workspace>", p.ej. "RNX - Asistente" para ~/asistente. La carpeta base se
+// lee del workspace root (no del path completo); fallback al cwd.
+func (m chatTUI) windowTitle() string {
+	root := m.ctrl.WorkspaceRoot()
+	if root == "" {
+		if wd, err := os.Getwd(); err == nil {
+			root = wd
+		}
+	}
+	base := filepath.Base(root)
+	if base == "." || base == "/" || base == "" {
+		base = "reasonix"
+	}
+	return "RNX - " + base
+}
+
+// withTitle stamps the terminal window title on the view (bubbletea v2:
+// WindowTitle va en la View, no como Cmd).
+func (m chatTUI) withTitle(v tea.View) tea.View {
+	v.WindowTitle = m.windowTitle()
+	return v
+}
+
 func suspendWithMouseReset() tea.Cmd {
 	return tea.Sequence(tea.Raw(resetMouseTracking), tea.Suspend)
 }
@@ -3311,7 +3335,7 @@ func (m chatTUI) View() tea.View {
 				v.MouseMode = tea.MouseModeCellMotion
 			}
 		}
-		return v
+		return m.withTitle(v)
 	}
 	boxW := max(m.width, 10)
 	hideComposer := m.hideComposer()
@@ -3428,7 +3452,7 @@ func (m chatTUI) View() tea.View {
 				v.Cursor = clampCursorToTerminal(cur, m.width, m.height)
 			}
 		}
-		return v
+		return m.withTitle(v)
 	}
 
 	// Full-screen frame: the transcript viewport on top (it pads to exactly its
@@ -3460,7 +3484,7 @@ func (m chatTUI) View() tea.View {
 			v.Cursor = clampCursorToTerminal(cur, m.width, m.height)
 		}
 	}
-	return v
+	return m.withTitle(v)
 }
 
 // clampCursorToTerminal keeps the reported caret inside [0,w) × [0,h).

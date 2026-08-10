@@ -3326,6 +3326,31 @@ func TestTextOnlyModelSendsPastedImageRefsForToolUse(t *testing.T) {
 	}
 }
 
+func TestChatTUIWindowTitle(t *testing.T) {
+	events := make(chan event.Event, 8)
+	m := newTestChatTUI()
+	m.ctrl = control.New(control.Options{
+		Runner: &recordingTurnRunner{},
+		Sink: event.FuncSink(func(e event.Event) {
+			events <- e
+		}),
+		WorkspaceRoot: "/home/edugoat/asistente",
+		ModelRef:      "test/model",
+	})
+	if got := m.windowTitle(); got != "RNX - asistente" {
+		t.Fatalf("windowTitle = %q, want %q", got, "RNX - asistente")
+	}
+	// Root vacio: el fallback usa el cwd; no debe paniquear y debe llevar prefijo.
+	m.ctrl = control.New(control.Options{
+		Runner: &recordingTurnRunner{},
+		Sink:   event.FuncSink(func(e event.Event) { events <- e }),
+		ModelRef: "test/model",
+	})
+	if got := m.windowTitle(); !strings.HasPrefix(got, "RNX - ") {
+		t.Fatalf("windowTitle con root vacio = %q, debe llevar prefijo RNX", got)
+	}
+}
+
 func TestVisionModelAllowsSendingPastedImageRefs(t *testing.T) {
 	workspace := t.TempDir()
 	writeTUIImageCapabilityConfig(t, workspace)
