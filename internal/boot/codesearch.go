@@ -137,14 +137,18 @@ func syncCodeSearch(ctx context.Context, ix *codesearch.Index, stderr io.Writer)
 
 // indexDirForTest expone dónde queda el índice de un workspace, para poder
 // verificar que vive fuera del proyecto y bajo su identidad.
-func indexDirForTest(root string) string {
-	return filepath.Join(config.CodeSearchIndexDir(), codesearch.IdentifyWorkspace(root).ID)
+func indexDirForTest(cfg config.CodeSearchConfig, root string) string {
+	return filepath.Join(config.CodeSearchIndexDir(), codesearch.IdentifyWorkspaceIn(root, cfg.ContainerPaths()).ID)
 }
 
 // codeSearchAvailable predice si la herramienta se va a registrar, sin
 // construir el índice, para decidir la guía del prompt antes del ensamblaje.
 func codeSearchAvailable(cfg config.CodeSearchConfig, root string) bool {
-	return cfg.Enabled && root != "" && os.Getenv(cfg.Normalized().APIKeyEnv) != ""
+	// Una carpeta contenedora no registra la herramienta, así que tampoco puede
+	// llevar su guía al prompt: serían instrucciones sobre algo que el modelo
+	// no va a tener, pagadas en el prefijo de cada turno.
+	return cfg.Enabled && root != "" && !cfg.IsContainer(root) &&
+		os.Getenv(cfg.Normalized().APIKeyEnv) != ""
 }
 
 // publishCodeSearchStatus conecta el avance del índice al controlador, para que

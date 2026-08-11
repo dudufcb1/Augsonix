@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"reasonix/internal/agent/testutil"
+	"reasonix/internal/config"
 	"reasonix/internal/event"
 	"reasonix/internal/provider"
 )
@@ -142,7 +143,7 @@ func TestCodeSearchIndexLivesOutsideTheProject(t *testing.T) {
 	// tiene por qué vivir en el árbol de trabajo de nadie, donde aparece en los
 	// listados y en cualquier repositorio cuyo .gitignore no lo cubra.
 	project := t.TempDir()
-	dir := indexDirForTest(project)
+	dir := indexDirForTest(config.CodeSearchConfig{}, project)
 	if strings.HasPrefix(dir, project) {
 		t.Errorf("el índice quedó dentro del proyecto: %s", dir)
 	}

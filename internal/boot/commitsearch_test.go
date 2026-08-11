@@ -54,3 +54,22 @@ func TestExampleConfigParsesWithCommitOptions(t *testing.T) {
 		t.Error("el ejemplo trae la historia encendida por defecto; cuesta cuota y debe optarse")
 	}
 }
+
+func TestCodeSearchGuidanceStaysOutOfContainerFolders(t *testing.T) {
+	// En una carpeta contenedora la herramienta no se registra, así que su guía
+	// tampoco puede entrar al prompt: serían instrucciones sobre algo que el
+	// modelo no va a tener, pagadas en el prefijo de cada turno.
+	root := t.TempDir()
+	t.Setenv("CODESEARCH_TEST_KEY", "clave")
+	cfg := config.CodeSearchConfig{Enabled: true, APIKeyEnv: "CODESEARCH_TEST_KEY"}
+	if !codeSearchAvailable(cfg, root) {
+		t.Fatal("no se dio por disponible en una carpeta normal")
+	}
+	cfg.Containers = []string{root}
+	if codeSearchAvailable(cfg, root) {
+		t.Error("se dio por disponible en la raíz de un contenedor")
+	}
+	if !codeSearchAvailable(cfg, filepath.Join(root, "subproyecto")) {
+		t.Error("se negó dentro de un subproyecto del contenedor")
+	}
+}
