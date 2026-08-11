@@ -22,6 +22,9 @@ type Index struct {
 	embedder Embedder
 	reranker Reranker
 	progress progress
+	// recipe entra en el hash de cada archivo: si cambia el troceo o el modelo,
+	// lo guardado deja de coincidir y se reindexa sin que nadie lo pida.
+	recipe string
 	// syncing serializa los escaneos: el arranque lanza uno en segundo plano y
 	// el watcher puede pedir otro. Dos a la vez se pisarían el estado y
 	// embeberían dos veces lo mismo, cobrándolo dos veces.
@@ -51,7 +54,11 @@ type Stats struct {
 // el mismo modelo que embedder, o los vectores guardados no serán comparables
 // con los nuevos.
 func NewIndex(root string, store VectorStore, state *State, embedder Embedder, reranker Reranker) *Index {
-	return &Index{root: root, store: store, state: state, embedder: embedder, reranker: reranker}
+	return &Index{
+		root: root, store: store, state: state,
+		embedder: embedder, reranker: reranker,
+		recipe: IndexRecipe(embedder.Model(), embedder.Dims()),
+	}
 }
 
 // Sync recorre el workspace y deja el índice reflejando el disco: embebe los
@@ -147,7 +154,7 @@ func (ix *Index) syncFile(ctx context.Context, rel string) (bool, error) {
 		return false, err
 	}
 	content := string(data)
-	hash := FileHash(content)
+	hash := FileHash(ix.recipe, content)
 	if !IndexableContent(content) {
 		ix.store.Delete(rel)
 		ix.state.Set(rel, hash)

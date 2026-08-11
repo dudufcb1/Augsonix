@@ -132,13 +132,6 @@ func segmentHash(path string, start, end int, content string) string {
 	return hex.EncodeToString(sum[:])
 }
 
-// FileHash identifica el contenido completo de un archivo, para saltarse los
-// que no cambiaron sin volver a trocearlos.
-func FileHash(content string) string {
-	sum := sha256.Sum256([]byte(content))
-	return hex.EncodeToString(sum[:])
-}
-
 func joinLines(lines []string) string {
 	return strings.Join(lines, "\n")
 }

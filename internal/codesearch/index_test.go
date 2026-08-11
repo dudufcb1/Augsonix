@@ -16,6 +16,9 @@ type fakeEmbedder struct {
 	dims  int
 	calls int
 	texts []string
+	// model permite simular un cambio de proveedor, que debe invalidar lo
+	// indexado igual que un cambio en el troceo.
+	model string
 }
 
 // callCount lee el contador con el candado, porque el watcher embebe desde otra
@@ -43,8 +46,13 @@ func (f *fakeEmbedder) Embed(_ context.Context, texts []string, _ InputKind) ([]
 	return out, nil
 }
 
-func (f *fakeEmbedder) Dims() int     { return f.dims }
-func (f *fakeEmbedder) Model() string { return "fake" }
+func (f *fakeEmbedder) Dims() int { return f.dims }
+func (f *fakeEmbedder) Model() string {
+	if f.model == "" {
+		return "fake"
+	}
+	return f.model
+}
 
 // writeFile crea un archivo con contenido suficiente para producir un chunk.
 func writeFile(t *testing.T, root, rel, body string) {
