@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"sync"
 
 	"reasonix/internal/fileutil"
 )
@@ -24,6 +25,9 @@ const (
 // milisegundos. Los vectores van en int8, cuatro veces menos memoria que
 // float32, porque el orden fino no sale de aquí sino del reranker.
 type LocalStore struct {
+	// mu protege files: el watcher reindexa desde su goroutine mientras la
+	// herramienta de búsqueda lee desde la del agente.
+	mu    sync.RWMutex
 	dir   string
 	dims  int
 	model string
@@ -98,6 +102,9 @@ func (s *LocalStore) load(man indexManifest, raw []byte) error {
 // Replace deja el archivo con exactamente esos chunks y vectores, quitando lo
 // que tuviera antes. vecs viene concatenado: dims valores por chunk.
 func (s *LocalStore) Replace(path string, chunks []Chunk, vecs []int8) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
 	if len(chunks)*s.dims != len(vecs) {
 		return fmt.Errorf("codesearch: %d chunks piden %d valores, llegaron %d", len(chunks), len(chunks)*s.dims, len(vecs))
 	}
@@ -112,13 +119,28 @@ func (s *LocalStore) Replace(path string, chunks []Chunk, vecs []int8) error {
 }
 
 // Delete saca del índice todo lo que venía de un archivo.
-func (s *LocalStore) Delete(path string) { delete(s.files, path) }
+func (s *LocalStore) Delete(path string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	delete(s.files, path)
+}
 
 // Has reporta si un archivo tiene chunks en el índice.
-func (s *LocalStore) Has(path string) bool { _, ok := s.files[path]; return ok }
+func (s *LocalStore) Has(path string) bool {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	_, ok := s.files[path]
+	return ok
+}
 
 // Paths devuelve los archivos indexados, ordenados.
 func (s *LocalStore) Paths() []string {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.pathsLocked()
+}
+
+func (s *LocalStore) pathsLocked() []string {
 	out := make([]string, 0, len(s.files))
 	for p := range s.files {
 		out = append(out, p)
@@ -129,6 +151,8 @@ func (s *LocalStore) Paths() []string {
 
 // Stats reporta cuántos archivos y chunks hay indexados.
 func (s *LocalStore) Stats() (files, chunks int) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
 	for _, fv := range s.files {
 		chunks += len(fv.Chunks)
 	}
@@ -145,8 +169,10 @@ func (s *LocalStore) Search(query []int8, limit int) []Match {
 	if qNorm == 0 {
 		return nil
 	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
 	var out []Match
-	for _, path := range s.Paths() {
+	for _, path := range s.pathsLocked() {
 		fv := s.files[path]
 		for i := range fv.Chunks {
 			vec := fv.vecs[i*s.dims : (i+1)*s.dims]
@@ -171,7 +197,8 @@ func (s *LocalStore) Save() error {
 	if err := os.MkdirAll(s.dir, 0o755); err != nil {
 		return err
 	}
-	order := s.Paths()
+	s.mu.RLock()
+	order := s.pathsLocked()
 	man := indexManifest{Dims: s.dims, Model: s.model, Files: map[string][]Chunk{}, Order: order}
 	var blob []byte
 	for _, path := range order {
@@ -179,6 +206,7 @@ func (s *LocalStore) Save() error {
 		man.Files[path] = fv.Chunks
 		blob = append(blob, int8ToBytes(fv.vecs)...)
 	}
+	s.mu.RUnlock()
 	if err := fileutil.AtomicWriteFile(filepath.Join(s.dir, vectorsFileName), blob, 0o644); err != nil {
 		return err
 	}

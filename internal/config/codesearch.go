@@ -57,6 +57,9 @@ type CodeSearchConfig struct {
 	PostgresURLEnv string `toml:"postgres_url_env"`
 	// AutoIndex sincroniza el índice al abrir el workspace, en segundo plano.
 	AutoIndex bool `toml:"auto_index"`
+	// Watch mantiene el índice al día mientras se trabaja, sin esperar a la
+	// siguiente sesión.
+	Watch bool `toml:"watch"`
 }
 
 // DefaultCodeSearch son los valores con los que arranca la función. Está
@@ -72,6 +75,7 @@ func DefaultCodeSearch() CodeSearchConfig {
 		Prompt:         PromptModeTool,
 		PostgresURLEnv: "CODESEARCH_POSTGRES_URL",
 		AutoIndex:      true,
+		Watch:          true,
 	}
 }
 

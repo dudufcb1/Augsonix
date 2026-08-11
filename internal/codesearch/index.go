@@ -5,6 +5,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"sync"
 )
 
 // Index mantiene el índice semántico de un workspace al día. Reindexa solo lo
@@ -16,6 +17,10 @@ type Index struct {
 	embedder Embedder
 	reranker Reranker
 	progress progress
+	// syncing serializa los escaneos: el arranque lanza uno en segundo plano y
+	// el watcher puede pedir otro. Dos a la vez se pisarían el estado y
+	// embeberían dos veces lo mismo, cobrándolo dos veces.
+	syncing sync.Mutex
 }
 
 // Progress informa el avance de un escaneo, para que un frontend pueda
@@ -48,6 +53,9 @@ func NewIndex(root string, store VectorStore, state *State, embedder Embedder, r
 // archivos nuevos o modificados, y saca los que desaparecieron. onProgress
 // puede ser nil.
 func (ix *Index) Sync(ctx context.Context, onProgress func(Progress)) (Stats, error) {
+	ix.syncing.Lock()
+	defer ix.syncing.Unlock()
+
 	first := ix.state.Len() == 0
 	ix.progress.set(func(s *Status) { *s = Status{Phase: PhaseScanning, First: first} })
 

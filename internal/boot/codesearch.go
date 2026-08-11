@@ -46,7 +46,11 @@ func addCodeSearch(ctx context.Context, reg *tool.Registry, root string, cfg con
 	}
 	// Sin la cancelación heredada: el escaneo inicial sobrevive al ensamblaje,
 	// que termina mucho antes de que el índice esté al día.
-	syncCodeSearch(context.WithoutCancel(ctx), ix, stderr)
+	bg := context.WithoutCancel(ctx)
+	syncCodeSearch(bg, ix, stderr)
+	if cfg.Watch {
+		go (&codesearch.Watcher{Index: ix}).Run(bg)
+	}
 	return ix
 }
 

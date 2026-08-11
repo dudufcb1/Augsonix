@@ -5,20 +5,32 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 )
 
 // fakeEmbedder produce vectores deterministas a partir del texto, para probar
 // el flujo sin llamar al proveedor ni gastar cuota.
 type fakeEmbedder struct {
+	mu    sync.Mutex
 	dims  int
 	calls int
 	texts []string
 }
 
+// callCount lee el contador con el candado, porque el watcher embebe desde otra
+// goroutine mientras el test lo consulta.
+func (f *fakeEmbedder) callCount() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.calls
+}
+
 func (f *fakeEmbedder) Embed(_ context.Context, texts []string, _ InputKind) ([][]int8, error) {
+	f.mu.Lock()
 	f.calls++
 	f.texts = append(f.texts, texts...)
+	f.mu.Unlock()
 	out := make([][]int8, len(texts))
 	for i, t := range texts {
 		v := make([]int8, f.dims)
@@ -81,7 +93,7 @@ func TestSyncIndexesSupportedFiles(t *testing.T) {
 	if st.Embedded != 2 {
 		t.Errorf("se embebieron %d archivos, esperaba 2", st.Embedded)
 	}
-	if emb.calls == 0 {
+	if emb.callCount() == 0 {
 		t.Error("no se llamó al embebedor")
 	}
 }
@@ -94,7 +106,7 @@ func TestSyncSkipsUnchangedFilesOnSecondRun(t *testing.T) {
 	if _, err := ix.Sync(context.Background(), nil); err != nil {
 		t.Fatal(err)
 	}
-	callsAfterFirst := emb.calls
+	callsAfterFirst := emb.callCount()
 
 	st, err := ix.Sync(context.Background(), nil)
 	if err != nil {
@@ -106,8 +118,8 @@ func TestSyncSkipsUnchangedFilesOnSecondRun(t *testing.T) {
 	if st.Unchanged != 1 {
 		t.Errorf("Unchanged = %d, esperaba 1", st.Unchanged)
 	}
-	if emb.calls != callsAfterFirst {
-		t.Errorf("el embebedor se llamó %d veces extra", emb.calls-callsAfterFirst)
+	if emb.callCount() != callsAfterFirst {
+		t.Errorf("el embebedor se llamó %d veces extra", emb.callCount()-callsAfterFirst)
 	}
 }
 
