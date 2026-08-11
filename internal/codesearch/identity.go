@@ -36,6 +36,15 @@ type Workspace struct {
 // No se usa el commit raíz: leerlo de verdad exige recorrer el historial, y el
 // commit de HEAD cambiaría la identidad en cada commit nuevo.
 func IdentifyWorkspace(root string) Workspace {
+	return IdentifyWorkspaceIn(root, nil)
+}
+
+// IdentifyWorkspaceIn hace lo mismo sabiendo qué carpetas agrupan proyectos. En
+// un repositorio normal un subdirectorio comparte identidad con la raíz, porque
+// quien abre internal/agent quiere el índice del proyecto. Cuando el
+// repositorio ES un contenedor, cada subcarpeta va aparte: compartir índice
+// haría que la segunda borrara los archivos de la primera.
+func IdentifyWorkspaceIn(root string, containers []string) Workspace {
 	abs, err := filepath.Abs(root)
 	if err != nil {
 		abs = filepath.Clean(root)
@@ -44,10 +53,42 @@ func IdentifyWorkspace(root string) Workspace {
 
 	if gitDir := findGitDir(abs); gitDir != "" {
 		if remote := originURL(gitDir); remote != "" {
-			return Workspace{ID: hashID("remote:" + normalizeRemote(remote)), Name: name, Source: SourceRemote}
+			key := "remote:" + normalizeRemote(remote)
+			if isWithinContainer(filepath.Dir(gitDir), containers) {
+				if sub := subPathWithin(gitDir, abs); sub != "" {
+					key += "#" + sub
+				}
+			}
+			return Workspace{ID: hashID(key), Name: name, Source: SourceRemote}
 		}
 	}
 	return Workspace{ID: hashID("path:" + abs), Name: name, Source: SourcePath}
+}
+
+// isWithinContainer reporta si repoRoot es una de las carpetas contenedoras.
+func isWithinContainer(repoRoot string, containers []string) bool {
+	target := filepath.Clean(repoRoot)
+	for _, c := range containers {
+		if c == "" {
+			continue
+		}
+		if abs, err := filepath.Abs(c); err == nil && filepath.Clean(abs) == target {
+			return true
+		}
+	}
+	return false
+}
+
+// subPathWithin devuelve la ruta de abs relativa a la raíz del repositorio, con
+// separadores "/", o cadena vacía si abs es esa misma raíz. gitDir apunta al
+// directorio .git, así que la raíz es su carpeta contenedora.
+func subPathWithin(gitDir, abs string) string {
+	repoRoot := filepath.Dir(gitDir)
+	rel, err := filepath.Rel(repoRoot, abs)
+	if err != nil || rel == "." || strings.HasPrefix(rel, "..") {
+		return ""
+	}
+	return filepath.ToSlash(rel)
 }
 
 // normalizeRemote lleva las formas de una misma URL a un texto común, para que

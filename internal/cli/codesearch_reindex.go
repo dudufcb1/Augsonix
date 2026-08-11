@@ -25,6 +25,10 @@ func codeSearchReindex(cfg config.CodeSearchConfig, root string, force bool) int
 		fmt.Fprintln(os.Stderr, "codesearch: apagado — activa [codesearch] enabled en reasonix.toml")
 		return 1
 	}
+	if cfg.IsContainer(root) {
+		fmt.Fprintf(os.Stderr, "codesearch: %s está listado como contenedor en [codesearch] containers.\nAgrupa proyectos en vez de ser uno: entra a un subproyecto y reindexa ahí.\n", root)
+		return 1
+	}
 	keys := boot.CodeSearchKeyring(cfg.APIKeyEnv)
 	if keys.Len() == 0 {
 		fmt.Fprintf(os.Stderr, "codesearch: %s no está definida\n", cfg.APIKeyEnv)
@@ -44,7 +48,7 @@ func codeSearchReindex(cfg config.CodeSearchConfig, root string, force bool) int
 		fmt.Fprintf(os.Stderr, "codesearch: %v\n", err)
 		return 1
 	}
-	ws := codesearch.IdentifyWorkspace(root)
+	ws := codesearch.IdentifyWorkspaceIn(root, cfg.ContainerPaths())
 	if force {
 		fmt.Printf("borrando el índice de %s antes de reconstruirlo…\n", ws.Name)
 		if code := codeSearchClear(cfg, root); code != 0 {

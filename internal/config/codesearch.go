@@ -2,6 +2,8 @@ package config
 
 import (
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 )
 
@@ -78,6 +80,9 @@ type CodeSearchConfig struct {
 	// Watch mantiene el índice al día mientras se trabaja, sin esperar a la
 	// siguiente sesión.
 	Watch bool `toml:"watch"`
+	// Containers son carpetas que agrupan proyectos en vez de ser uno: no se
+	// indexan enteras, pero sus subcarpetas sí, cada una por su cuenta.
+	Containers []string `toml:"containers"`
 	// Commits indexa además la historia del repositorio, para poder buscar cómo
 	// se hizo antes un cambio parecido. Va aparte porque cuesta cuota propia y
 	// no todos los proyectos la necesitan.
@@ -185,4 +190,54 @@ func (c CodeSearchConfig) PromptGuidance() string {
 	default:
 		return ""
 	}
+}
+
+// ContainerPaths devuelve las carpetas contenedoras ya resueltas: absolutas y
+// con "~" expandido. Quien las compara no tiene por qué repetir esa limpieza.
+func (c CodeSearchConfig) ContainerPaths() []string {
+	out := make([]string, 0, len(c.Containers))
+	for _, entry := range c.Containers {
+		if p := normalizeContainerPath(entry); p != "" {
+			out = append(out, p)
+		}
+	}
+	return out
+}
+
+// IsContainer reporta si root es exactamente una de las carpetas contenedoras.
+// Solo la coincidencia exacta cuenta: el sentido de la lista es que las
+// subcarpetas sí se puedan indexar.
+func (c CodeSearchConfig) IsContainer(root string) bool {
+	target := normalizeContainerPath(root)
+	if target == "" {
+		return false
+	}
+	for _, entry := range c.Containers {
+		if p := normalizeContainerPath(entry); p != "" && p == target {
+			return true
+		}
+	}
+	return false
+}
+
+// normalizeContainerPath deja una ruta comparable: expande "~", la vuelve
+// absoluta y le quita la barra final, porque nadie escribe la lista dos veces
+// igual.
+func normalizeContainerPath(raw string) string {
+	p := strings.TrimSpace(raw)
+	if p == "" {
+		return ""
+	}
+	if p == "~" || strings.HasPrefix(p, "~/") {
+		home, err := os.UserHomeDir()
+		if err != nil {
+			return ""
+		}
+		p = filepath.Join(home, strings.TrimPrefix(strings.TrimPrefix(p, "~"), "/"))
+	}
+	abs, err := filepath.Abs(p)
+	if err != nil {
+		return ""
+	}
+	return filepath.Clean(abs)
 }

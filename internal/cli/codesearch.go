@@ -65,7 +65,7 @@ func codeSearchContext() (config.CodeSearchConfig, string, error) {
 }
 
 func codeSearchStatus(cfg config.CodeSearchConfig, root string) int {
-	ws := codesearch.IdentifyWorkspace(root)
+	ws := codesearch.IdentifyWorkspaceIn(root, cfg.ContainerPaths())
 	fmt.Printf("proyecto   %s\n", ws.Name)
 	fmt.Printf("identidad  %s  (de %s)\n", ws.ID, ws.Source)
 	if !cfg.Enabled {
@@ -108,7 +108,7 @@ func codeSearchQuick(cfg config.CodeSearchConfig, root string) int {
 	if !cfg.Enabled {
 		return 1
 	}
-	ws := codesearch.IdentifyWorkspace(root)
+	ws := codesearch.IdentifyWorkspaceIn(root, cfg.ContainerPaths())
 	state, err := codesearch.LoadState(filepath.Join(config.CodeSearchIndexDir(), ws.ID))
 	if err != nil || state.Len() == 0 {
 		return 1
@@ -118,7 +118,7 @@ func codeSearchQuick(cfg config.CodeSearchConfig, root string) int {
 }
 
 func codeSearchClear(cfg config.CodeSearchConfig, root string) int {
-	ws := codesearch.IdentifyWorkspace(root)
+	ws := codesearch.IdentifyWorkspaceIn(root, cfg.ContainerPaths())
 	store, err := openStoreForWorkspace(cfg, ws.ID, ws.Name)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "codesearch: %v\n", err)

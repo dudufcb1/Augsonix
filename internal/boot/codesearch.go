@@ -34,6 +34,12 @@ func addCodeSearch(ctx context.Context, reg *tool.Registry, root string, cfg con
 	for _, w := range cfg.Warnings() {
 		fmt.Fprintln(stderr, w)
 	}
+	// Una carpeta contenedora agrupa proyectos; indexarla entera arrastra todo
+	// lo que cuelga de ella. Sus subcarpetas sí se indexan por separado.
+	if cfg.IsContainer(root) {
+		fmt.Fprintf(stderr, "code_search disabled: %s está listado como contenedor en [codesearch] containers; abre un subproyecto para indexarlo\n", root)
+		return nil
+	}
 	cfg = cfg.Normalized()
 	keys := CodeSearchKeyring(cfg.APIKeyEnv)
 	if keys.Len() == 0 {
@@ -85,7 +91,7 @@ func OpenCodeSearchIndex(ctx context.Context, root string, cfg config.CodeSearch
 	// El índice se guarda bajo la identidad del workspace y no bajo su ruta,
 	// para que mover la carpeta no obligue a reindexar y volver a pagarlo. La
 	// misma identidad separa proyectos dentro de una base compartida.
-	ws := codesearch.IdentifyWorkspace(root)
+	ws := codesearch.IdentifyWorkspaceIn(root, cfg.ContainerPaths())
 	dir := filepath.Join(config.CodeSearchIndexDir(), ws.ID)
 
 	store, err := OpenCodeSearchStore(ctx, dir, ws.ID, ws.Name, cfg)
@@ -253,7 +259,7 @@ func OpenCommitIndex(ctx context.Context, root string, cfg config.CodeSearchConf
 		BaseURL:     cfg.BaseURL,
 		HTTP:        client,
 	}
-	ws := codesearch.IdentifyWorkspace(root)
+	ws := codesearch.IdentifyWorkspaceIn(root, cfg.ContainerPaths())
 	id := ws.ID + commitWorkspaceSuffix
 	dir := filepath.Join(config.CodeSearchIndexDir(), id)
 	store, err := OpenCodeSearchStore(ctx, dir, id, ws.Name, cfg)

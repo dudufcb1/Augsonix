@@ -327,6 +327,16 @@ grep_friction_limit = 3
 #
 # Cuesta cuota propia: unos 1200 tokens por commit, una sola vez. Un repositorio
 # de 200 commits ronda los 250 mil tokens de embedding.
+# Carpetas que agrupan proyectos en vez de ser un proyecto. No se indexan como
+# un todo -abrir la raiz arrastraria todo lo que cuelga de ella- pero sus
+# subcarpetas si, cada una con su propio indice.
+#
+# Dentro de una carpeta listada, cada subcarpeta cuenta como proyecto aparte
+# aunque compartan repositorio de git. Fuera de la lista el comportamiento no
+# cambia: abrir internal/algo de tu propio repositorio sigue usando el indice
+# del proyecto entero.
+containers = []
+
 commits = false
 # Cuantos commits hacia atras se indexan. La historia vieja se busca poco y cada
 # commit cuesta. Cero toma el valor por defecto (1000).
