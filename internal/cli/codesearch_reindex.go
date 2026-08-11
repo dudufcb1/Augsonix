@@ -69,6 +69,42 @@ func codeSearchReindex(cfg config.CodeSearchConfig, root string, force bool) int
 	if used := tokensUsed(ix); used > 0 {
 		fmt.Printf("consumo    %s tokens del proveedor\n", humanCount(used))
 	}
+	if cfg.Commits {
+		if code := reindexCommits(ctx, cfg, root, key); code != 0 {
+			return code
+		}
+	}
+	return 0
+}
+
+// reindexCommits construye el índice de la historia después del de código. Va
+// aquí y no en un comando aparte porque quien reindexa un proyecto quiere las
+// dos mitades al día, no una.
+func reindexCommits(ctx context.Context, cfg config.CodeSearchConfig, root, key string) int {
+	ix, err := boot.OpenCommitIndex(ctx, root, cfg, key, netclient.ProxySpec{})
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "commits: %v\n", err)
+		return 1
+	}
+	fmt.Println("indexando la historia")
+	start := time.Now()
+	bar := &progressBar{out: os.Stdout, start: start}
+	st, err := ix.Sync(ctx, func(s codesearch.CommitStats) {
+		bar.update(codesearch.Progress{Done: s.Embedded, Total: s.Scanned, Embedded: s.Embedded})
+	})
+	bar.clear()
+
+	if ctx.Err() != nil {
+		fmt.Printf("\ninterrumpido tras %s. Los commits embebidos quedaron guardados.\n",
+			time.Since(start).Round(time.Second))
+		return 130
+	}
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "commits: %v\n", err)
+		return 1
+	}
+	fmt.Printf("listo en %s · %d commits revisados, %d embebidos, %d sin cambios, %d retirados\n",
+		time.Since(start).Round(time.Second), st.Scanned, st.Embedded, st.Unchanged, st.Removed)
 	return 0
 }
 
