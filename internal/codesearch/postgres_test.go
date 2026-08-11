@@ -14,7 +14,7 @@ func pgStore(t *testing.T, workspace string, dims int) *PostgresStore {
 	if dsn == "" {
 		t.Skip("sin CODESEARCH_POSTGRES_URL")
 	}
-	s, err := OpenPostgresStore(context.Background(), dsn, workspace, "test-model", dims)
+	s, err := OpenPostgresStore(context.Background(), dsn, workspace, workspace, "test-model", dims)
 	if err != nil {
 		t.Fatalf("OpenPostgresStore: %v", err)
 	}

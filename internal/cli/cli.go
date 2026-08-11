@@ -72,9 +72,8 @@ func RunWithBuildInfo(args []string, info BuildInfo) int {
 		defer cancel()
 		_ = stats.Flush(flushCtx, config.StatsDir())
 	}()
-	// Pick the UI language up front so even pre-config paths (the first-run
-	// welcome banner) come through localized. Env-only first; if a config
-	// exists and pins a language, that wins.
+	// Pick the UI language up front so pre-config paths (the first-run banner)
+	// come through localized. Env first; a config that pins a language wins.
 	i18n.DetectLanguage("")
 	cmd := ""
 	if len(args) > 0 {
@@ -83,10 +82,9 @@ func RunWithBuildInfo(args []string, info BuildInfo) int {
 	if cmd == "--acp" {
 		cmd = "acp"
 	}
-	// -p/--print is one-shot print mode. reasonix has no interactive -p, so a
-	// print flag anywhere in a leading flag run (no explicit subcommand) routes
-	// the whole set to `run --print` — `reasonix --model X -p "task"` works, not
-	// only `reasonix -p ...`.
+	// -p/--print is one-shot print mode. With no explicit subcommand, a print
+	// flag anywhere in the leading flags routes the whole set to `run --print`,
+	// so `reasonix --model X -p "task"` works, not only `reasonix -p ...`.
 	if cmd == "-p" || cmd == "--print" || (isDefaultInteractiveFlag(cmd) && hasLeadingPrintFlag(args)) {
 		args = append([]string{"run", "--print"}, stripLeadingPrintFlag(args)...)
 		cmd = "run"
@@ -119,6 +117,10 @@ func RunWithBuildInfo(args []string, info BuildInfo) int {
 	}
 
 	rest := args[1:]
+	if run, ok := themedCommands[cmd]; ok {
+		configureCLIThemeFromConfig()
+		return run(rest)
+	}
 	switch cmd {
 	case "run":
 		return runAgent(rest, version)
@@ -129,9 +131,6 @@ func RunWithBuildInfo(args []string, info BuildInfo) int {
 	case "setup":
 		configureCLIThemeFromConfigForTTYOutput()
 		return setupConfig(rest)
-	case "config":
-		configureCLIThemeFromConfig()
-		return configCommand(rest)
 	case "init":
 		// AGENTS.md is model-generated in-session by `/init`. This entry just points
 		// there (and to `setup`), so `reasonix init` isn't a dead end.
@@ -140,15 +139,9 @@ func RunWithBuildInfo(args []string, info BuildInfo) int {
 	case "acp":
 		configureCLIThemeFromConfig()
 		return acpCommand(rest, version)
-	case "mcp":
-		configureCLIThemeFromConfig()
-		return mcpCommand(rest)
 	case "remote":
 		configureCLIThemeFromConfig()
 		return remoteCommand(rest, version)
-	case "plugin":
-		configureCLIThemeFromConfig()
-		return pluginCommand(rest)
 	case "subagent":
 		configureCLIThemeFromConfigForTTYOutput()
 		return subagentCommand(rest)
@@ -157,21 +150,6 @@ func RunWithBuildInfo(args []string, info BuildInfo) int {
 			configureCLIThemeFromConfig()
 		}
 		return doctorCommand(rest, version)
-	case "report":
-		configureCLIThemeFromConfig()
-		return reportCommand(rest)
-	case "session":
-		configureCLIThemeFromConfig()
-		return sessionCommand(rest)
-	case "hook", "hooks":
-		configureCLIThemeFromConfig()
-		return hookCommand(rest)
-	case "task":
-		configureCLIThemeFromConfig()
-		return taskCommand(rest)
-	case "review":
-		configureCLIThemeFromConfig()
-		return reviewCommand(rest)
 	case "bot":
 		configureCLIThemeFromConfig()
 		return botCommand(rest, version)
@@ -589,10 +567,9 @@ func runAgent(args []string, version string) int {
 		}
 	}
 
-	// Resolve the resume target up front so --copy and the session lease can be
-	// handled before any heavy assembly. --resume takes precedence over
-	// --continue, matching the Resume call below. Accept file paths, branch
-	// IDs, preview text, and opaque machine session IDs (#7429).
+	// Resolve the resume target up front so --copy and the session lease land
+	// before any heavy assembly. --resume beats --continue, matching Resume
+	// below. Accepts paths, branch IDs, preview text, and machine IDs (#7429).
 	resumePath := strings.TrimSpace(*resume)
 	if resumePath != "" {
 		resolved, err := resolveSessionQuery(resolveCLISessionDir(), resumePath)

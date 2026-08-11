@@ -80,7 +80,7 @@ func openCodeSearchIndex(ctx context.Context, root string, cfg config.CodeSearch
 	ws := codesearch.IdentifyWorkspace(root)
 	dir := filepath.Join(config.CodeSearchIndexDir(), ws.ID)
 
-	store, err := openCodeSearchStore(ctx, dir, ws.ID, cfg)
+	store, err := OpenCodeSearchStore(ctx, dir, ws.ID, ws.Name, cfg)
 	if err != nil {
 		return nil, err
 	}
@@ -170,11 +170,11 @@ func bindGateIndex(gate *builtin.SearchGate, ix *codesearch.Index) {
 	gate.Usable = func() bool { _, ok := ix.Ready(); return ok }
 }
 
-// openCodeSearchStore elige dónde viven los vectores. El backend remoto no cae
+// OpenCodeSearchStore elige dónde viven los vectores. El backend remoto no cae
 // al local en silencio si falla: quien configuró Postgres espera que su índice
 // viaje entre máquinas, y un local improvisado se vería igual de bien mientras
 // no cumple eso.
-func openCodeSearchStore(ctx context.Context, dir, workspaceID string, cfg config.CodeSearchConfig) (codesearch.VectorStore, error) {
+func OpenCodeSearchStore(ctx context.Context, dir, workspaceID, name string, cfg config.CodeSearchConfig) (codesearch.VectorStore, error) {
 	if cfg.Backend != config.BackendPostgres {
 		store, err := codesearch.OpenLocalStore(dir, cfg.Model, cfg.Dimensions)
 		if err != nil {
@@ -186,7 +186,7 @@ func openCodeSearchStore(ctx context.Context, dir, workspaceID string, cfg confi
 	if dsn == "" {
 		return nil, fmt.Errorf("code index backend postgres: %s is not set", cfg.PostgresURLEnv)
 	}
-	store, err := codesearch.OpenPostgresStore(ctx, dsn, workspaceID, cfg.Model, cfg.Dimensions)
+	store, err := codesearch.OpenPostgresStore(ctx, dsn, workspaceID, name, cfg.Model, cfg.Dimensions)
 	if err != nil {
 		return nil, fmt.Errorf("open code index: %w", err)
 	}

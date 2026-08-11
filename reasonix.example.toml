@@ -294,6 +294,7 @@ prompt_mode = "tool"
 # Se desactiva sola si el índice no puede responder.
 grep_friction = "off"
 grep_friction_limit = 3
+# Se administra con: reasonix codesearch status | list | clear
 
 [serve]
 # Authentication for the HTTP serve frontend (reasonix serve).

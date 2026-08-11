@@ -18,14 +18,18 @@ type PostgresStore struct {
 	pool      *pgxpool.Pool
 	table     string
 	workspace string
-	model     string
-	dims      int
+	// name es la carpeta del proyecto, guardada solo para que el listado sea
+	// legible: un identificador de dieciséis hexadecimales no le dice a nadie
+	// qué índice puede borrar.
+	name  string
+	model string
+	dims  int
 }
 
 // OpenPostgresStore conecta y deja el esquema listo. La tabla lleva la dimensión
 // en el nombre porque el tipo vector la fija en la columna: así conviven índices
 // de distinta dimensión en la misma base en vez de pelearse por una tabla.
-func OpenPostgresStore(ctx context.Context, dsn, workspace, model string, dims int) (*PostgresStore, error) {
+func OpenPostgresStore(ctx context.Context, dsn, workspace, name, model string, dims int) (*PostgresStore, error) {
 	if dims <= 0 {
 		return nil, fmt.Errorf("codesearch: dimensión inválida %d", dims)
 	}
@@ -37,12 +41,20 @@ func OpenPostgresStore(ctx context.Context, dsn, workspace, model string, dims i
 		pool:      pool,
 		table:     fmt.Sprintf("codesearch_chunks_%d", dims),
 		workspace: workspace,
+		name:      name,
 		model:     model,
 		dims:      dims,
 	}
 	if err := s.migrate(ctx); err != nil {
 		pool.Close()
 		return nil, err
+	}
+	// Rellenar el nombre de lo indexado antes de que existiera la columna, para
+	// que el listado sea legible sin esperar a que el proyecto se reindexe.
+	if name != "" {
+		_, _ = pool.Exec(ctx,
+			fmt.Sprintf(`UPDATE %s SET ws_name=$1 WHERE workspace=$2 AND ws_name=''`, s.table),
+			name, workspace)
 	}
 	return s, nil
 }
@@ -63,10 +75,12 @@ func (s *PostgresStore) migrate(ctx context.Context) error {
 			content    text NOT NULL,
 			model      text NOT NULL,
 			file_hash  text NOT NULL DEFAULT '',
+			ws_name    text NOT NULL DEFAULT '',
 			embedding  vector(%d) NOT NULL,
 			PRIMARY KEY (workspace, path, chunk_hash)
 		)`, s.table, s.dims),
 		fmt.Sprintf(`ALTER TABLE %s ADD COLUMN IF NOT EXISTS file_hash text NOT NULL DEFAULT ''`, s.table),
+		fmt.Sprintf(`ALTER TABLE %s ADD COLUMN IF NOT EXISTS ws_name text NOT NULL DEFAULT ''`, s.table),
 		fmt.Sprintf(`CREATE INDEX IF NOT EXISTS %s_ws ON %s (workspace, path)`, s.table, s.table),
 		fmt.Sprintf(`CREATE INDEX IF NOT EXISTS %s_hnsw ON %s
 			USING hnsw ((embedding::halfvec(%d)) halfvec_cosine_ops)`, s.table, s.table, s.dims),
@@ -103,16 +117,16 @@ func (s *PostgresStore) Replace(path, fileHash string, chunks []Chunk, vecs []in
 		return err
 	}
 	insert := fmt.Sprintf(`INSERT INTO %s
-		(workspace, path, chunk_hash, start_line, end_line, content, model, embedding, file_hash)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
+		(workspace, path, chunk_hash, start_line, end_line, content, model, embedding, file_hash, ws_name)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
 		ON CONFLICT (workspace, path, chunk_hash) DO UPDATE
 		SET start_line=EXCLUDED.start_line, end_line=EXCLUDED.end_line,
 		    content=EXCLUDED.content, embedding=EXCLUDED.embedding,
-		    file_hash=EXCLUDED.file_hash`, s.table)
+		    file_hash=EXCLUDED.file_hash, ws_name=EXCLUDED.ws_name`, s.table)
 	for i, c := range chunks {
 		vec := vecs[i*s.dims : (i+1)*s.dims]
 		if _, err := tx.Exec(ctx, insert, s.workspace, c.Path, c.Hash,
-			c.StartLine, c.EndLine, c.Content, s.model, encodeVector(vec), fileHash); err != nil {
+			c.StartLine, c.EndLine, c.Content, s.model, encodeVector(vec), fileHash, s.name); err != nil {
 			return err
 		}
 	}
@@ -226,3 +240,43 @@ func encodeVector(v []int8) string {
 }
 
 var _ VectorStore = (*PostgresStore)(nil)
+
+// WorkspaceIndex resume lo que un proyecto ocupa en la base compartida.
+type WorkspaceIndex struct {
+	Workspace string
+	Name      string
+	Files     int
+	Chunks    int
+}
+
+// Workspaces enumera todo lo indexado en la base, no solo el proyecto actual.
+// Es la única forma de encontrar índices de proyectos que ya no se tocan: sin
+// esto se quedan ocupando espacio sin que nadie sepa que están ahí.
+func (s *PostgresStore) Workspaces() ([]WorkspaceIndex, error) {
+	rows, err := s.pool.Query(context.Background(),
+		fmt.Sprintf(`SELECT workspace, COALESCE(MAX(ws_name),''), COUNT(DISTINCT path), COUNT(*)
+			FROM %s GROUP BY workspace ORDER BY 2, 1`, s.table))
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []WorkspaceIndex
+	for rows.Next() {
+		var w WorkspaceIndex
+		if err := rows.Scan(&w.Workspace, &w.Name, &w.Files, &w.Chunks); err != nil {
+			continue
+		}
+		out = append(out, w)
+	}
+	return out, rows.Err()
+}
+
+// DeleteWorkspace borra el índice completo de un proyecto de la base.
+func (s *PostgresStore) DeleteWorkspace(workspace string) (int64, error) {
+	tag, err := s.pool.Exec(context.Background(),
+		fmt.Sprintf(`DELETE FROM %s WHERE workspace=$1`, s.table), workspace)
+	if err != nil {
+		return 0, err
+	}
+	return tag.RowsAffected(), nil
+}
