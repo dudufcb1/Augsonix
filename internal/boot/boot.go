@@ -216,8 +216,7 @@ func build(ctx context.Context, opts Options) (*BuildResult, error) {
 	}
 	root := resolveWorkspaceRoot(opts.WorkspaceRoot)
 	// launchWD es el cwd del proceso (ya chdir'ed a --dir si vino). Las tools
-	// trabajan contra este para que "pwd" y las rutas relativas coincidan con
-	// donde el usuario lanzó reasonix, no con el git root más cercano.
+	// trabajan contra este para que "pwd" coincida con donde se lanzó reasonix.
 	launchWD, err := os.Getwd()
 	if err != nil {
 		launchWD = root
@@ -667,6 +666,7 @@ func build(ctx context.Context, opts Options) (*BuildResult, error) {
 		fmt.Fprintln(stderr, "warning: bash not found on PATH; the shell tool will run commands under Windows PowerShell. Install Git for Windows or WSL to use bash, or set [tools.shell] prefer=\"powershell\" to silence this.")
 	}
 	searchSpec := builtin.ResolveSearch(cfg.Tools.Search.Engine, cfg.Tools.Search.RgPath, stderr)
+	searchSpec.Gate = newSearchGate(cfg.CodeSearch)
 	bashTimeout := time.Duration(cfg.BashTimeoutSeconds()) * time.Second
 	enabledBuiltins := cfg.Tools.Enabled
 	if tokenEconomy {
@@ -685,7 +685,7 @@ func build(ctx context.Context, opts Options) (*BuildResult, error) {
 	if !tokenEconomy || len(cfg.Tools.Enabled) == 0 || len(enabledBuiltins) > 0 {
 		addBuiltins(reg, enabledBuiltins, writeRoots, bashSpec, bashTimeout, searchSpec, stderr, launchWD, proxySpec, forbidReadRoots, readPathResolver, sessionGuard, managedConfig, opts.FileOverlay, opts.TerminalRunner, sessionTemp, fileWriteReceipt)
 	}
-	codeIx := addCodeSearch(ctx, reg, launchWD, cfg.CodeSearch, proxySpec, stderr)
+	codeIx := addCodeSearch(ctx, reg, launchWD, cfg.CodeSearch, proxySpec, stderr, searchSpec.Gate)
 	// Use the caller-supplied shared host when set, so controllers for the same
 	// workspace root reuse running MCP processes (e.g. one CodeGraph daemon
 	// instead of one per tab). Otherwise construct a private host per controller.

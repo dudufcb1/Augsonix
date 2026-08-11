@@ -21,16 +21,17 @@ type CodeSearchIndex interface {
 
 type codeSearch struct {
 	index CodeSearchIndex
+	gate  *SearchGate
 }
 
 // NewCodeSearch liga la tool a un índice. Devuelve nil cuando no hay índice, y
 // entonces la tool no se registra: una tool inútil sigue costando tokens de
 // prefijo en cada turno de cada sesión.
-func NewCodeSearch(index CodeSearchIndex) tool.Tool {
+func NewCodeSearch(index CodeSearchIndex, gate *SearchGate) tool.Tool {
 	if index == nil {
 		return nil
 	}
-	return codeSearch{index: index}
+	return codeSearch{index: index, gate: gate}
 }
 
 func (codeSearch) Name() string { return "code_search" }
@@ -66,7 +67,7 @@ type codeSearchArgs struct {
 	Limit   int    `json:"limit"`
 }
 
-func (c codeSearch) Execute(ctx context.Context, args json.RawMessage) (string, error) {
+func (g codeSearch) Execute(ctx context.Context, args json.RawMessage) (string, error) {
 	var p codeSearchArgs
 	if err := json.Unmarshal(args, &p); err != nil {
 		return "", fmt.Errorf("invalid args: %w", err)
@@ -74,12 +75,12 @@ func (c codeSearch) Execute(ctx context.Context, args json.RawMessage) (string, 
 	if strings.TrimSpace(p.Request) == "" {
 		return "", fmt.Errorf("request is required")
 	}
-	if c.index == nil {
+	if g.index == nil {
 		return "", fmt.Errorf("code_search is not configured: set [codesearch] in reasonix.toml")
 	}
 	// Un índice vacío no es un error: es un índice que aún no se construye. El
 	// modelo necesita saberlo para no concluir que el código no existe.
-	if chunks, ok := c.index.Ready(); !ok {
+	if chunks, ok := g.index.Ready(); !ok {
 		return fmt.Sprintf("The semantic index is empty (%d chunks); it may still be building. Use grep or glob for this lookup.", chunks), nil
 	}
 	if p.Limit <= 0 {
@@ -89,13 +90,14 @@ func (c codeSearch) Execute(ctx context.Context, args json.RawMessage) (string, 
 		p.Limit = codeSearchMaxLimit
 	}
 
-	results, err := c.index.Search(ctx, p.Request, codesearch.SearchOptions{
+	results, err := g.index.Search(ctx, p.Request, codesearch.SearchOptions{
 		Limit:      p.Limit,
 		PathPrefix: p.Path,
 	})
 	if err != nil {
 		return "", fmt.Errorf("code_search: %w", err)
 	}
+	g.gate.RecordSemantic()
 	return formatCodeSearch(results), nil
 }
 

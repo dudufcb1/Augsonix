@@ -20,6 +20,20 @@ const (
 	PromptModeMandatory CodeSearchPromptMode = "mandatory"
 )
 
+// GrepFriction empuja del grep encadenado hacia la búsqueda semántica sin
+// quitarle la herramienta al modelo. Cuál conviene se mide, igual que el modo de
+// prompt, y por eso es una perilla y no una decisión tomada.
+type GrepFriction string
+
+const (
+	// FrictionOff deja grep como siempre.
+	FrictionOff GrepFriction = "off"
+	// FrictionSemi pide declarar no_semantic_needed para seguir con grep.
+	FrictionSemi GrepFriction = "semi"
+	// FrictionStrict corta y manda a code_search.
+	FrictionStrict GrepFriction = "strict"
+)
+
 // CodeSearchBackend es dónde viven los vectores.
 type CodeSearchBackend string
 
@@ -60,22 +74,29 @@ type CodeSearchConfig struct {
 	// Watch mantiene el índice al día mientras se trabaja, sin esperar a la
 	// siguiente sesión.
 	Watch bool `toml:"watch"`
+	// GrepFriction interviene cuando el modelo encadena búsquedas de texto sin
+	// consultar el índice.
+	GrepFriction GrepFriction `toml:"grep_friction"`
+	// GrepFrictionLimit son las búsquedas de texto seguidas que se toleran.
+	GrepFrictionLimit int `toml:"grep_friction_limit"`
 }
 
 // DefaultCodeSearch son los valores con los que arranca la función. Está
 // deshabilitada por defecto porque indexar cuesta dinero del usuario.
 func DefaultCodeSearch() CodeSearchConfig {
 	return CodeSearchConfig{
-		Enabled:        false,
-		Model:          "voyage-code-4",
-		Dimensions:     1024,
-		RerankModel:    "rerank-2.5",
-		APIKeyEnv:      "VOYAGE_API_KEY",
-		Backend:        BackendLocal,
-		Prompt:         PromptModeTool,
-		PostgresURLEnv: "CODESEARCH_POSTGRES_URL",
-		AutoIndex:      true,
-		Watch:          true,
+		Enabled:           false,
+		Model:             "voyage-code-4",
+		Dimensions:        1024,
+		RerankModel:       "rerank-2.5",
+		APIKeyEnv:         "VOYAGE_API_KEY",
+		Backend:           BackendLocal,
+		Prompt:            PromptModeTool,
+		PostgresURLEnv:    "CODESEARCH_POSTGRES_URL",
+		AutoIndex:         true,
+		Watch:             true,
+		GrepFriction:      FrictionOff,
+		GrepFrictionLimit: 3,
 	}
 }
 
@@ -101,6 +122,14 @@ func (c CodeSearchConfig) Normalized() CodeSearchConfig {
 	case PromptModeTool, PromptModeEncourage, PromptModeMandatory:
 	default:
 		c.Prompt = d.Prompt
+	}
+	switch c.GrepFriction {
+	case FrictionOff, FrictionSemi, FrictionStrict:
+	default:
+		c.GrepFriction = d.GrepFriction
+	}
+	if c.GrepFrictionLimit <= 0 {
+		c.GrepFrictionLimit = d.GrepFrictionLimit
 	}
 	if strings.TrimSpace(c.PostgresURLEnv) == "" {
 		c.PostgresURLEnv = d.PostgresURLEnv

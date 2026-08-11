@@ -77,6 +77,7 @@ type grepTool struct {
 	forbidRoots []string
 	sb          sandbox.Spec
 	sessionTemp *sessiontemp.Manager
+	gate        *SearchGate
 }
 
 func (grepTool) Name() string { return "grep" }
@@ -88,8 +89,15 @@ func (g grepTool) Description() string {
 	return "Search for a regular expression in a file, or recursively under a directory (skips hidden files and files matched by .gitignore). Returns matching lines as path:line:text, capped at 200 matches."
 }
 
-func (grepTool) Schema() json.RawMessage {
-	return json.RawMessage(`{"type":"object","properties":{"pattern":{"type":"string","description":"Regular expression (RE2 syntax)"},"path":{"type":"string","description":"File or directory to search (default \".\")"},"timeout_seconds":{"type":"integer","description":"Abort and return partial matches after this many seconds (default 30, max 300). Raise it for a large tree; lower it for a quick probe.","minimum":1}},"required":["pattern"]}`)
+// El campo no_semantic_needed solo aparece con la fricción en modo semi, y el
+// modo se fija al arrancar: este esquema viaja en el prefijo estable del prompt,
+// y cambiarlo a media sesión tiraría la caché del proveedor en cada cambio.
+func (g grepTool) Schema() json.RawMessage {
+	const base = `{"type":"object","properties":{"pattern":{"type":"string","description":"Regular expression (RE2 syntax)"},"path":{"type":"string","description":"File or directory to search (default \".\")"},"timeout_seconds":{"type":"integer","description":"Abort and return partial matches after this many seconds (default 30, max 300). Raise it for a large tree; lower it for a quick probe.","minimum":1}`
+	if g.gate != nil && g.gate.Mode == FrictionSemi {
+		return json.RawMessage(base + `,"no_semantic_needed":{"type":"boolean","description":"Set true only when you already know the exact string and semantic search cannot help."}},"required":["pattern"]}`)
+	}
+	return json.RawMessage(base + `},"required":["pattern"]}`)
 }
 
 func (grepTool) ReadOnly() bool { return true }
@@ -105,12 +113,16 @@ func (g grepTool) Execute(ctx context.Context, args json.RawMessage) (string, er
 		Pattern        string `json:"pattern"`
 		Path           string `json:"path"`
 		TimeoutSeconds int    `json:"timeout_seconds"`
+		NoSemanticNeed bool   `json:"no_semantic_needed"`
 	}
 	if err := json.Unmarshal(args, &p); err != nil {
 		return "", fmt.Errorf("invalid args: %w", err)
 	}
 	if p.Pattern == "" {
 		return "", fmt.Errorf("pattern is required")
+	}
+	if err := g.gate.Check(p.NoSemanticNeed); err != nil {
+		return "", err
 	}
 	if p.Path == "" {
 		p.Path = "."
@@ -387,6 +399,10 @@ func displayRipgrepLine(line string, rp ResolvedPath) string {
 // delegate to that ripgrep binary; empty uses the native Go scanner.
 type SearchSpec struct {
 	RgPath string
+	// Gate aplica la fricción que empuja del grep encadenado hacia la búsqueda
+	// semántica. Viaja aquí y no como parámetro suelto porque es configuración
+	// de búsqueda y ya llega hasta las herramientas por este camino.
+	Gate *SearchGate
 }
 
 // ResolveSearch picks the grep engine from config. "native" forces the Go

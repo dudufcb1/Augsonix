@@ -26,7 +26,7 @@ const codeSearchHTTPTimeout = 2 * time.Minute
 // el índice sincronizándose en segundo plano. Devuelve nil sin tocar el
 // registro si está apagada o le falta la credencial: una tool que no puede
 // responder seguiría costando tokens de prefijo en cada turno.
-func addCodeSearch(ctx context.Context, reg *tool.Registry, root string, cfg config.CodeSearchConfig, proxy netclient.ProxySpec, stderr io.Writer) *codesearch.Index {
+func addCodeSearch(ctx context.Context, reg *tool.Registry, root string, cfg config.CodeSearchConfig, proxy netclient.ProxySpec, stderr io.Writer, gate *builtin.SearchGate) *codesearch.Index {
 	if !cfg.Enabled || root == "" {
 		return nil
 	}
@@ -42,7 +42,8 @@ func addCodeSearch(ctx context.Context, reg *tool.Registry, root string, cfg con
 		fmt.Fprintf(stderr, "code_search disabled: %v\n", err)
 		return nil
 	}
-	if t := builtin.NewCodeSearch(ix); t != nil {
+	bindGateIndex(gate, ix)
+	if t := builtin.NewCodeSearch(ix, gate); t != nil {
 		reg.Add(t)
 	}
 	// Sin la cancelación heredada: el escaneo inicial sobrevive al ensamblaje,
@@ -143,4 +144,26 @@ func publishCodeSearchStatus(ctrl *control.Controller, ix *codesearch.Index) {
 			Chunks: s.Chunks, First: s.First, Err: s.Err,
 		}
 	})
+}
+
+// newSearchGate arma la fricción de grep desde la configuración. Devuelve nil
+// cuando está apagada, para que grep quede byte-idéntico al de siempre.
+func newSearchGate(cfg config.CodeSearchConfig) *builtin.SearchGate {
+	cfg = cfg.Normalized()
+	if !cfg.Enabled || cfg.GrepFriction == config.FrictionOff {
+		return nil
+	}
+	return &builtin.SearchGate{
+		Mode:  builtin.SearchFriction(cfg.GrepFriction),
+		Limit: cfg.GrepFrictionLimit,
+	}
+}
+
+// bindGateIndex le enseña al gate a consultar el índice, para que se desactive
+// solo cuando no haya a dónde mandar al modelo.
+func bindGateIndex(gate *builtin.SearchGate, ix *codesearch.Index) {
+	if gate == nil || ix == nil {
+		return
+	}
+	gate.Usable = func() bool { _, ok := ix.Ready(); return ok }
 }
