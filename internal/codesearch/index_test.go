@@ -2,11 +2,14 @@ package codesearch
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
+	"time"
 )
 
 // fakeEmbedder produce vectores deterministas a partir del texto, para probar
@@ -303,5 +306,81 @@ func TestSyncReembedsWhenStoreHashIsStale(t *testing.T) {
 	}
 	if st.Embedded != 1 {
 		t.Errorf("Embedded = %d, el archivo cambió y debía reindexarse", st.Embedded)
+	}
+}
+
+// concurrencyProbe cuenta cuántas peticiones coinciden en vuelo, para poder
+// afirmar que el escaneo de verdad solapa trabajo y no solo lo parece.
+type concurrencyProbe struct {
+	dims     int
+	inFlight atomic.Int32
+	peak     atomic.Int32
+}
+
+func (c *concurrencyProbe) Embed(_ context.Context, texts []string, _ InputKind) ([][]int8, error) {
+	n := c.inFlight.Add(1)
+	for {
+		peak := c.peak.Load()
+		if n <= peak || c.peak.CompareAndSwap(peak, n) {
+			break
+		}
+	}
+	time.Sleep(20 * time.Millisecond) // simula la espera de red, que es lo que se solapa
+	c.inFlight.Add(-1)
+
+	out := make([][]int8, len(texts))
+	for i := range out {
+		out[i] = make([]int8, c.dims)
+	}
+	return out, nil
+}
+
+func (c *concurrencyProbe) Dims() int     { return c.dims }
+func (c *concurrencyProbe) Model() string { return "fake" }
+
+func TestSyncOverlapsFilesInFlight(t *testing.T) {
+	// Sin esto, bajar los trabajadores a uno pasaría inadvertido: la indexación
+	// seguiría siendo correcta, solo que varias veces más lenta, y nadie se
+	// enteraría hasta cronometrar un repositorio grande.
+	ix, root, _ := newTestIndex(t)
+	for i := range 40 {
+		writeFile(t, root, fmt.Sprintf("archivo%02d.go", i), body("contenido"))
+	}
+	probe := &concurrencyProbe{dims: 8}
+	ix.embedder = probe
+
+	if _, err := ix.Sync(context.Background(), nil); err != nil {
+		t.Fatal(err)
+	}
+	if peak := probe.peak.Load(); peak < 2 {
+		t.Errorf("nunca hubo más de %d archivo en vuelo: el escaneo va en serie", peak)
+	}
+}
+
+func TestSyncCountsEveryFileExactlyOnce(t *testing.T) {
+	// Con varios trabajadores y un solo recolector, las cuentas tienen que
+	// seguir cuadrando: cada archivo se cuenta una vez y solo una.
+	ix, root, _ := newTestIndex(t)
+	const files = 50
+	for i := range files {
+		writeFile(t, root, fmt.Sprintf("archivo%02d.go", i), body("contenido"))
+	}
+	st, err := ix.Sync(context.Background(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if st.Scanned != files {
+		t.Errorf("Scanned = %d, esperaba %d", st.Scanned, files)
+	}
+	if st.Embedded != files {
+		t.Errorf("Embedded = %d, esperaba %d", st.Embedded, files)
+	}
+	second, err := ix.Sync(context.Background(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if second.Unchanged != files || second.Embedded != 0 {
+		t.Errorf("segundo escaneo: %d sin cambios y %d embebidos, esperaba %d y 0",
+			second.Unchanged, second.Embedded, files)
 	}
 }

@@ -4,7 +4,9 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
+	"sync/atomic"
 	"testing"
 )
 
@@ -90,12 +92,36 @@ func TestSyncStopsAndReportsQuota(t *testing.T) {
 	}
 }
 
-// quotaEmbedder simula un proveedor sin saldo.
-type quotaEmbedder struct{ calls int }
+// quotaEmbedder simula un proveedor sin saldo. El contador va atómico porque
+// durante un escaneo lo llaman varios trabajadores a la vez.
+type quotaEmbedder struct{ calls atomic.Int32 }
 
 func (q *quotaEmbedder) Embed(context.Context, []string, InputKind) ([][]int8, error) {
-	q.calls++
+	q.calls.Add(1)
 	return nil, ErrQuotaExhausted
 }
 func (q *quotaEmbedder) Dims() int     { return 8 }
 func (q *quotaEmbedder) Model() string { return "fake" }
+
+func TestSyncStopsTheOtherWorkersWhenQuotaRunsOut(t *testing.T) {
+	// El primero que descubre que no hay cuota tiene que frenar a los demás.
+	// Si cada trabajador siguiera con su cola, un workspace grande dispararía
+	// miles de peticiones contra una cuenta muerta.
+	ix, root, _ := newTestIndex(t)
+	const files = 400
+	for i := range files {
+		writeFile(t, root, fmt.Sprintf("archivo%03d.go", i), body("contenido"))
+	}
+	emb := &quotaEmbedder{}
+	ix.embedder = emb
+
+	if _, err := ix.Sync(context.Background(), nil); !errors.Is(err, ErrQuotaExhausted) {
+		t.Fatalf("Sync no propagó la cuota agotada: %v", err)
+	}
+	// Los trabajadores ya en vuelo terminan lo suyo, así que se tolera un
+	// puñado; lo que no puede es haber recorrido el workspace entero.
+	if got := int(emb.calls.Load()); got > syncWorkers*2 {
+		t.Errorf("se intentaron %d archivos tras quedarse sin cuota; se esperaban a lo mucho %d",
+			got, syncWorkers*2)
+	}
+}

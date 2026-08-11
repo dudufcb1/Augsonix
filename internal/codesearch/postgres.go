@@ -7,6 +7,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -33,7 +34,16 @@ func OpenPostgresStore(ctx context.Context, dsn, workspace, name, model string, 
 	if dims <= 0 {
 		return nil, fmt.Errorf("codesearch: dimensión inválida %d", dims)
 	}
-	pool, err := pgxpool.New(ctx, dsn)
+	// El pool tiene que dar al menos una conexión por archivo en vuelo: con
+	// menos, la mitad de los trabajadores espera turno y el paralelismo no sirve.
+	poolCfg, err := pgxpool.ParseConfig(dsn)
+	if err != nil {
+		return nil, fmt.Errorf("codesearch: dsn de postgres inválido: %w", err)
+	}
+	if poolCfg.MaxConns < syncWorkers+1 {
+		poolCfg.MaxConns = syncWorkers + 1
+	}
+	pool, err := pgxpool.NewWithConfig(ctx, poolCfg)
 	if err != nil {
 		return nil, fmt.Errorf("codesearch: conectar a postgres: %w", err)
 	}
@@ -106,31 +116,16 @@ func (s *PostgresStore) Replace(path, fileHash string, chunks []Chunk, vecs []in
 	if len(chunks)*s.dims != len(vecs) {
 		return fmt.Errorf("codesearch: %d chunks piden %d valores, llegaron %d", len(chunks), len(chunks)*s.dims, len(vecs))
 	}
-	ctx := context.Background()
-	tx, err := s.pool.Begin(ctx)
-	if err != nil {
-		return err
+	// Todo en un solo envío: pgx las encola y las manda juntas, en una
+	// transacción implícita. Por separado costarían un viaje de ida y vuelta
+	// cada una, y con el almacén en otra región la latencia es lo que domina.
+	batch := &pgx.Batch{}
+	batch.Queue(fmt.Sprintf(`DELETE FROM %s WHERE workspace=$1 AND path=$2`, s.table), s.workspace, path)
+	for _, group := range groupChunks(chunks, s.dims, vecs) {
+		batch.Queue(s.insertStatement(len(group.chunks)), s.insertArgs(path, fileHash, group)...)
 	}
-	defer tx.Rollback(ctx)
-
-	if _, err := tx.Exec(ctx, fmt.Sprintf(`DELETE FROM %s WHERE workspace=$1 AND path=$2`, s.table), s.workspace, path); err != nil {
-		return err
-	}
-	insert := fmt.Sprintf(`INSERT INTO %s
-		(workspace, path, chunk_hash, start_line, end_line, content, model, embedding, file_hash, ws_name)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
-		ON CONFLICT (workspace, path, chunk_hash) DO UPDATE
-		SET start_line=EXCLUDED.start_line, end_line=EXCLUDED.end_line,
-		    content=EXCLUDED.content, embedding=EXCLUDED.embedding,
-		    file_hash=EXCLUDED.file_hash, ws_name=EXCLUDED.ws_name`, s.table)
-	for i, c := range chunks {
-		vec := vecs[i*s.dims : (i+1)*s.dims]
-		if _, err := tx.Exec(ctx, insert, s.workspace, c.Path, c.Hash,
-			c.StartLine, c.EndLine, c.Content, s.model, encodeVector(vec), fileHash, s.name); err != nil {
-			return err
-		}
-	}
-	return tx.Commit(ctx)
+	results := s.pool.SendBatch(context.Background(), batch)
+	return results.Close()
 }
 
 // FileHash devuelve con qué contenido se indexó un archivo. Vive en la base y
@@ -279,4 +274,74 @@ func (s *PostgresStore) DeleteWorkspace(workspace string) (int64, error) {
 		return 0, err
 	}
 	return tag.RowsAffected(), nil
+}
+
+// maxInsertRows acota cuántas filas caben en una sentencia. Postgres admite
+// 65535 parámetros y cada fila usa insertColumns, así que el tope real queda
+// muy por encima; el límite existe para que un archivo desmedido no arme una
+// sentencia de megabytes.
+const maxInsertRows = 200
+
+// insertColumns son las columnas que escribe cada fila, en el orden en que
+// insertArgs las emite.
+const insertColumns = 10
+
+// chunkGroup es un tramo de fragmentos con sus vectores, listo para una sola
+// sentencia.
+type chunkGroup struct {
+	chunks []Chunk
+	vecs   []int8
+}
+
+// groupChunks reparte los fragmentos en tandas que quepan en una sentencia.
+// Escribirlos de uno en uno cuesta un viaje a la base por fragmento, y con el
+// almacén en otra región la latencia de ida y vuelta domina el indexado.
+func groupChunks(chunks []Chunk, dims int, vecs []int8) []chunkGroup {
+	var out []chunkGroup
+	for start := 0; start < len(chunks); start += maxInsertRows {
+		end := min(start+maxInsertRows, len(chunks))
+		out = append(out, chunkGroup{
+			chunks: chunks[start:end],
+			vecs:   vecs[start*dims : end*dims],
+		})
+	}
+	return out
+}
+
+// insertStatement arma un INSERT con tantas tuplas de VALUES como filas.
+func (s *PostgresStore) insertStatement(rows int) string {
+	var b strings.Builder
+	fmt.Fprintf(&b, `INSERT INTO %s
+		(workspace, path, chunk_hash, start_line, end_line, content, model, embedding, file_hash, ws_name)
+		VALUES `, s.table)
+	for i := range rows {
+		if i > 0 {
+			b.WriteString(",")
+		}
+		b.WriteString("(")
+		for c := range insertColumns {
+			if c > 0 {
+				b.WriteString(",")
+			}
+			fmt.Fprintf(&b, "$%d", i*insertColumns+c+1)
+		}
+		b.WriteString(")")
+	}
+	b.WriteString(` ON CONFLICT (workspace, path, chunk_hash) DO UPDATE
+		SET start_line=EXCLUDED.start_line, end_line=EXCLUDED.end_line,
+		    content=EXCLUDED.content, embedding=EXCLUDED.embedding,
+		    file_hash=EXCLUDED.file_hash, ws_name=EXCLUDED.ws_name`)
+	return b.String()
+}
+
+// insertArgs aplana los argumentos de todas las filas en el orden que espera
+// insertStatement.
+func (s *PostgresStore) insertArgs(path, fileHash string, g chunkGroup) []any {
+	args := make([]any, 0, len(g.chunks)*insertColumns)
+	for i, c := range g.chunks {
+		vec := g.vecs[i*s.dims : (i+1)*s.dims]
+		args = append(args, s.workspace, path, c.Hash, c.StartLine, c.EndLine,
+			c.Content, s.model, encodeVector(vec), fileHash, s.name)
+	}
+	return args
 }

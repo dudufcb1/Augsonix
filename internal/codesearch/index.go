@@ -9,9 +9,25 @@ import (
 	"sync"
 )
 
-// indexCheckpointFiles es cada cuántos archivos embebidos se vuelca lo hecho,
-// para que una interrupción cueste unos pocos archivos y no la indexación entera.
-const indexCheckpointFiles = 25
+const (
+	// indexCheckpointFiles es cada cuántos archivos embebidos se vuelca lo
+	// hecho, para que una interrupción cueste unos pocos y no la indexación
+	// entera.
+	indexCheckpointFiles = 25
+	// syncWorkers son los archivos que se procesan a la vez. El trabajo de cada
+	// uno es casi todo esperar respuestas de red —el proveedor de embeddings y
+	// el almacén—, así que varios en vuelo aprovechan esa espera en lugar de
+	// sumarla. Más allá de esto manda el límite de peticiones del proveedor.
+	syncWorkers = 8
+)
+
+// syncOutcome es lo que un trabajador reporta de un archivo, camino al único
+// sitio donde se llevan las cuentas.
+type syncOutcome struct {
+	path    string
+	changed bool
+	err     error
+}
 
 // Index mantiene el índice semántico de un workspace al día. Reindexa solo lo
 // que cambió: embeber es lo caro, tanto en cuota como en tiempo.
@@ -78,48 +94,14 @@ func (ix *Index) Sync(ctx context.Context, onProgress func(Progress)) (Stats, er
 	}
 	ix.progress.set(func(s *Status) { s.Total = len(files) })
 
-	var st Stats
+	st, err := ix.processFiles(ctx, files, onProgress)
+	if err != nil {
+		ix.fail(err)
+		return st, err
+	}
 	seen := make(map[string]bool, len(files))
-	for i, f := range files {
-		if err := ctx.Err(); err != nil {
-			ix.fail(err)
-			return st, err
-		}
+	for _, f := range files {
 		seen[f] = true
-		st.Scanned++
-
-		changed, err := ix.syncFile(ctx, f)
-		switch {
-		case errors.Is(err, ErrQuotaExhausted):
-			// Sin cuota no hay nada que hacer con los archivos que faltan:
-			// seguir solo acumularía el mismo error miles de veces.
-			ix.fail(err)
-			return st, err
-		case err != nil:
-			continue // un archivo ilegible no debe abortar el escaneo completo
-		case changed:
-			st.Embedded++
-		default:
-			st.Unchanged++
-		}
-		// Volcar cada tantos archivos: sin esto, cerrar a media indexación tira el
-		// progreso del almacén local y el siguiente arranque vuelve a embeberlo
-		// todo. Postgres ya confirma cada archivo en su transacción.
-		if st.Embedded > 0 && st.Embedded%indexCheckpointFiles == 0 && changed {
-			_ = ix.store.Save()
-			_ = ix.state.Save()
-		}
-		ix.progress.set(func(s *Status) {
-			s.Done, s.Embedded = i+1, st.Embedded
-			// Solo cuenta como indexado cuando de verdad se esta embebiendo;
-			// un escaneo sin cambios no debe alarmar con una barra de progreso.
-			if st.Embedded > 0 {
-				s.Phase = PhaseIndexing
-			}
-		})
-		if onProgress != nil {
-			onProgress(Progress{File: f, Done: i + 1, Total: len(files), Embedded: st.Embedded, Unchanged: st.Unchanged})
-		}
 	}
 
 	// Lo que quedó en el estado y ya no está en disco se fue del workspace.
@@ -255,3 +237,86 @@ func (ix *Index) fail(err error) {
 // Embedder expone el proveedor para que un frontend pueda preguntarle cuánto
 // consumió, sin que el índice tenga que llevar esa cuenta él mismo.
 func (ix *Index) Embedder() Embedder { return ix.embedder }
+
+// processFiles indexa los archivos con varios en vuelo y recoge los resultados
+// en una sola goroutine. Concentrar ahí los contadores y el volcado periódico
+// evita candados sobre el estado del escaneo, y deja un único punto donde
+// decidir si hay que parar.
+func (ix *Index) processFiles(ctx context.Context, files []string, onProgress func(Progress)) (Stats, error) {
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+
+	jobs := make(chan string)
+	results := make(chan syncOutcome)
+	var wg sync.WaitGroup
+	for range syncWorkers {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for f := range jobs {
+				changed, err := ix.syncFile(ctx, f)
+				select {
+				case results <- syncOutcome{path: f, changed: changed, err: err}:
+				case <-ctx.Done():
+					return
+				}
+			}
+		}()
+	}
+	go func() {
+		defer close(jobs)
+		for _, f := range files {
+			select {
+			case jobs <- f:
+			case <-ctx.Done():
+				return
+			}
+		}
+	}()
+	go func() {
+		wg.Wait()
+		close(results)
+	}()
+
+	var st Stats
+	var fatal error
+	for r := range results {
+		st.Scanned++
+		switch {
+		case errors.Is(r.err, ErrQuotaExhausted):
+			// Sin cuota no hay nada que hacer con lo que falta: se cancela para
+			// que los demás trabajadores no sigan gastando peticiones contra
+			// una cuenta muerta, y se drena lo que ya venía en camino.
+			if fatal == nil {
+				fatal = r.err
+				cancel()
+			}
+		case r.err != nil:
+			// Un archivo ilegible no debe abortar el escaneo completo.
+		case r.changed:
+			st.Embedded++
+		default:
+			st.Unchanged++
+		}
+		if st.Embedded > 0 && st.Embedded%indexCheckpointFiles == 0 && r.changed {
+			_ = ix.store.Save()
+			_ = ix.state.Save()
+		}
+		ix.progress.set(func(s *Status) {
+			s.Done, s.Embedded = st.Scanned, st.Embedded
+			// Solo cuenta como indexado cuando de verdad se está embebiendo; un
+			// escaneo sin cambios no debe alarmar con una barra de progreso.
+			if st.Embedded > 0 {
+				s.Phase = PhaseIndexing
+			}
+		})
+		if onProgress != nil {
+			onProgress(Progress{File: r.path, Done: st.Scanned, Total: len(files),
+				Embedded: st.Embedded, Unchanged: st.Unchanged})
+		}
+	}
+	if fatal != nil {
+		return st, fatal
+	}
+	return st, ctx.Err()
+}
