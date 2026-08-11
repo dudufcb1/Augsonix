@@ -14,6 +14,7 @@ import (
 func init() { tool.RegisterBuiltin(deleteRange{}) }
 
 type deleteRange struct {
+	onWrite WriteNotifier
 	roots   []string
 	guard   SessionDataGuard
 	managed ManagedConfigPaths
@@ -95,7 +96,7 @@ func (d deleteRange) preview(ctx context.Context, args json.RawMessage) (diff.Ch
 		return diff.Change{}, editSource{}, err
 	}
 
-	src, err := readEditSource(ctx, d.overlay, p.Path)
+	src, err := readEditSource(ctx, d.overlay, p.Path, d.onWrite)
 	if err != nil {
 		return diff.Change{}, editSource{}, fmt.Errorf("read %s: %w", p.Path, err)
 	}

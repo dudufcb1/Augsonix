@@ -15,6 +15,7 @@ type editSource struct {
 	content string
 	enc     fileenc.Kind
 	overlay bool
+	onWrite WriteNotifier
 }
 
 // readEditSource resolves path the way Execute and Preview must both see it:
@@ -22,17 +23,17 @@ type editSource struct {
 // decoded disk content. A non-UTF-8 file always stays on the disk route — the
 // overlay contract is text-only, so routing GBK or UTF-16 through it would
 // rewrite the file as UTF-8.
-func readEditSource(ctx context.Context, overlay FileOverlay, path string) (editSource, error) {
+func readEditSource(ctx context.Context, overlay FileOverlay, path string, onWrite WriteNotifier) (editSource, error) {
 	content, enc, err := readFileEncoded(path)
 	if err != nil {
 		return editSource{}, err
 	}
 	if overlay != nil && enc == fileenc.UTF8 && filepath.IsAbs(path) {
 		if buffered, ok := overlay.ReadTextFile(ctx, path); ok {
-			return editSource{content: buffered, enc: enc, overlay: true}, nil
+			return editSource{content: buffered, enc: enc, overlay: true, onWrite: onWrite}, nil
 		}
 	}
-	return editSource{content: content, enc: enc}, nil
+	return editSource{content: content, enc: enc, onWrite: onWrite}, nil
 }
 
 // write persists content on the same route the source was read from. An overlay
@@ -41,8 +42,15 @@ func readEditSource(ctx context.Context, overlay FileOverlay, path string) (edit
 func (s editSource) write(ctx context.Context, overlay FileOverlay, path, content string) error {
 	if s.overlay && overlay != nil {
 		if ok, err := overlay.WriteTextFile(ctx, path, content); ok {
+			if err == nil {
+				s.onWrite.notify(path)
+			}
 			return err
 		}
 	}
-	return writeFileEncoded(path, content, s.enc)
+	err := writeFileEncoded(path, content, s.enc)
+	if err == nil {
+		s.onWrite.notify(path)
+	}
+	return err
 }

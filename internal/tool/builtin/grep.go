@@ -403,6 +403,8 @@ type SearchSpec struct {
 	// semántica. Viaja aquí y no como parámetro suelto porque es configuración
 	// de búsqueda y ya llega hasta las herramientas por este camino.
 	Gate *SearchGate
+	// OnWrite avisa al índice de cada archivo modificado, por el mismo camino.
+	OnWrite WriteNotifier
 }
 
 // ResolveSearch picks the grep engine from config. "native" forces the Go

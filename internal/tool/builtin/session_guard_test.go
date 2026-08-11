@@ -192,7 +192,7 @@ func TestWriteToolsRejectSessionData(t *testing.T) {
 	// Workspace root covers the state root — the accidental self-write shape
 	// (e.g. a home-directory workspace).
 	guard := NewSessionDataGuard(root, nil)
-	tools := ConfineWriters([]string{root}, guard, ManagedConfigPaths{})
+	tools := ConfineWriters([]string{root}, guard, ManagedConfigPaths{}, nil)
 
 	argsFor := func(name, target string) json.RawMessage {
 		var m map[string]any

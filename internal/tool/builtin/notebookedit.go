@@ -24,6 +24,7 @@ func init() { tool.RegisterBuiltin(notebookEdit{}) }
 // ConfineWriters. workDir, when non-empty, is the directory a relative path
 // resolves against (see resolveIn).
 type notebookEdit struct {
+	onWrite WriteNotifier
 	roots   []string
 	guard   SessionDataGuard
 	managed ManagedConfigPaths
@@ -85,7 +86,7 @@ func (n notebookEdit) Execute(ctx context.Context, raw json.RawMessage) (string,
 	if err := confineWrite(ctx, n.roots, n.guard, n.managed, a.Path); err != nil {
 		return "", err
 	}
-	src, err := readEditSource(ctx, n.overlay, a.Path)
+	src, err := readEditSource(ctx, n.overlay, a.Path, n.onWrite)
 	if err != nil {
 		return "", fmt.Errorf("read %s: %w", a.Path, err)
 	}
@@ -119,7 +120,7 @@ func (n notebookEdit) Preview(ctx context.Context, raw json.RawMessage) (diff.Ch
 		return diff.Change{}, err
 	}
 	a.Path = resolveIn(n.workDir, a.Path)
-	src, err := readEditSource(ctx, n.overlay, a.Path)
+	src, err := readEditSource(ctx, n.overlay, a.Path, n.onWrite)
 	if err != nil {
 		return diff.Change{}, fmt.Errorf("read %s: %w", a.Path, err)
 	}

@@ -36,7 +36,7 @@ func (w writeFile) Preview(ctx context.Context, args json.RawMessage) (diff.Chan
 	p.Path = resolveIn(w.workDir, p.Path)
 
 	old, kind := "", diff.Create
-	if src, err := readEditSource(ctx, w.overlay, p.Path); err == nil {
+	if src, err := readEditSource(ctx, w.overlay, p.Path, nil); err == nil {
 		old, kind = src.content, diff.Modify
 	} else if !os.IsNotExist(err) {
 		return diff.Change{}, fmt.Errorf("read %s: %w", p.Path, err)
@@ -64,7 +64,7 @@ func (e editFile) Preview(ctx context.Context, args json.RawMessage) (diff.Chang
 	}
 	p.Path = resolveIn(e.workDir, p.Path)
 
-	src, err := readEditSource(ctx, e.overlay, p.Path)
+	src, err := readEditSource(ctx, e.overlay, p.Path, nil)
 	if err != nil {
 		return diff.Change{}, fmt.Errorf("read %s: %w", p.Path, err)
 	}
@@ -103,7 +103,7 @@ func (m multiEdit) Preview(ctx context.Context, args json.RawMessage) (diff.Chan
 	}
 	p.Path = resolveIn(m.workDir, p.Path)
 
-	src, err := readEditSource(ctx, m.overlay, p.Path)
+	src, err := readEditSource(ctx, m.overlay, p.Path, nil)
 	if err != nil {
 		return diff.Change{}, fmt.Errorf("read %s: %w", p.Path, err)
 	}

@@ -17,6 +17,7 @@ import (
 func init() { tool.RegisterBuiltin(deleteSymbol{}) }
 
 type deleteSymbol struct {
+	onWrite WriteNotifier
 	roots   []string
 	guard   SessionDataGuard
 	managed ManagedConfigPaths
@@ -82,7 +83,7 @@ func (d deleteSymbol) Execute(ctx context.Context, args json.RawMessage) (string
 		return "", fmt.Errorf("delete_symbol only supports Go files — use delete_range for %s files", ext)
 	}
 
-	src, err := readEditSource(ctx, d.overlay, p.Path)
+	src, err := readEditSource(ctx, d.overlay, p.Path, d.onWrite)
 	if err != nil {
 		return "", fmt.Errorf("read %s: %w", p.Path, err)
 	}
@@ -128,7 +129,7 @@ func (d deleteSymbol) Preview(ctx context.Context, args json.RawMessage) (diff.C
 		return diff.Change{}, fmt.Errorf("delete_symbol only supports Go files")
 	}
 
-	src, err := readEditSource(ctx, d.overlay, p.Path)
+	src, err := readEditSource(ctx, d.overlay, p.Path, d.onWrite)
 	if err != nil {
 		return diff.Change{}, fmt.Errorf("read %s: %w", p.Path, err)
 	}

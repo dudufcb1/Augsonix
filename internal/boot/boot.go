@@ -236,20 +236,18 @@ func build(ctx context.Context, opts Options) (*BuildResult, error) {
 		return nil, err
 	}
 	applyRuntimeAutoPricingCurrency(cfg, opts.AutoPricingCurrency)
-	// Arm the credential-protection layers from the user-global [secrets]
-	// section before any tool, hook, or plugin subprocess can spawn. Package
-	// globals are correct here because [secrets] is user-global (project
-	// reasonix.toml cannot override it), so concurrent workspaces agree.
+	// Arm the credential-protection layers from user-global [secrets] before any
+	// tool, hook, or plugin subprocess can spawn. Package globals are correct
+	// because project reasonix.toml cannot override it: workspaces agree.
 	secrets.SetFilterSubprocessEnv(cfg.Secrets.FilterSubprocessEnv)
 	secrets.SetProtectSensitiveFiles(cfg.Secrets.ProtectSensitiveFiles)
 	secrets.RegisterCredentialEnvKeys(cfg.CredentialEnvNames())
 
-	// Serialize the frontend's sink once: background jobs (below) emit from their
-	// own goroutines, which can overlap a running turn's emission, so every emitter
-	// shares this synchronized sink. It is created before extension preflight so
-	// sidecar warnings and host/ui/* publishes land on the same channel as every
-	// later notice. The job manager is session-scoped — its jobs outlive a turn
-	// and are cancelled by Controller.Close.
+	// Serialize the frontend's sink once: background jobs emit from their own
+	// goroutines and can overlap a turn, so every emitter shares it. Built before
+	// extension preflight so sidecar warnings and host/ui/* publishes land on the
+	// same channel. Jobs are session-scoped: they outlive a turn and Close cancels
+	// them.
 	sink := event.Sync(opts.Sink)
 
 	// Both sink wraps must complete BEFORE the extension UI hub closes over the
@@ -667,6 +665,8 @@ func build(ctx context.Context, opts Options) (*BuildResult, error) {
 	}
 	searchSpec := builtin.ResolveSearch(cfg.Tools.Search.Engine, cfg.Tools.Search.RgPath, stderr)
 	searchSpec.Gate = newSearchGate(cfg.CodeSearch)
+	codeWatcher := newCodeSearchWatcher(cfg.CodeSearch)
+	searchSpec.OnWrite = codeWatcher.NotifyPath
 	bashTimeout := time.Duration(cfg.BashTimeoutSeconds()) * time.Second
 	enabledBuiltins := cfg.Tools.Enabled
 	if tokenEconomy {
@@ -685,7 +685,7 @@ func build(ctx context.Context, opts Options) (*BuildResult, error) {
 	if !tokenEconomy || len(cfg.Tools.Enabled) == 0 || len(enabledBuiltins) > 0 {
 		addBuiltins(reg, enabledBuiltins, writeRoots, bashSpec, bashTimeout, searchSpec, stderr, launchWD, proxySpec, forbidReadRoots, readPathResolver, sessionGuard, managedConfig, opts.FileOverlay, opts.TerminalRunner, sessionTemp, fileWriteReceipt)
 	}
-	codeIx := addCodeSearch(ctx, reg, launchWD, cfg.CodeSearch, proxySpec, stderr, searchSpec.Gate)
+	codeIx := addCodeSearch(ctx, reg, launchWD, cfg.CodeSearch, proxySpec, stderr, searchSpec.Gate, codeWatcher)
 	// Use the caller-supplied shared host when set, so controllers for the same
 	// workspace root reuse running MCP processes (e.g. one CodeGraph daemon
 	// instead of one per tab). Otherwise construct a private host per controller.
@@ -2694,7 +2694,7 @@ func addBuiltins(reg *tool.Registry, enabled, writeRoots []string, bashSpec sand
 	if rebound, ok := builtin.BindSessionTemp(searchTool, sessionTemp); ok {
 		searchTool = rebound
 	}
-	writers := builtin.ConfineWriters(writeRoots, sessionGuard, managedConfig)
+	writers := builtin.ConfineWriters(writeRoots, sessionGuard, managedConfig, searchSpec.OnWrite)
 	for i, writer := range writers {
 		writers[i] = builtin.BindFileWriteReceipt(writer, fileWriteReceipt)
 	}

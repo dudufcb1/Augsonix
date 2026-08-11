@@ -177,3 +177,32 @@ func TestWatcherDetectsDeletedFile(t *testing.T) {
 		t.Error("el archivo borrado siguió en el índice")
 	}
 }
+
+func TestNotifyPathIsSafeOnNilWatcher(t *testing.T) {
+	// Sin vigilante configurado, las herramientas de escritura siguen llamando
+	// al aviso en cada archivo. Un nil ahí tumbaría la sesión al primer edit.
+	var w *Watcher
+	w.NotifyPath("internal/algo.go")
+}
+
+func TestWatcherIndexesRightAfterAWriteNotice(t *testing.T) {
+	// El caso que motiva el aviso: el agente edita y el índice se entera sin
+	// esperar al reloj. Con el sondeo en una hora, solo el aviso puede lograrlo.
+	ix, root, _ := newTestIndex(t)
+	writeFile(t, root, "a.go", body("alpha"))
+	if _, err := ix.Sync(context.Background(), nil); err != nil {
+		t.Fatal(err)
+	}
+	_, before := ix.store.Stats()
+
+	w := startWatcher(t, ix, time.Hour, 20*time.Millisecond)
+	writeFile(t, root, "nuevo.go", body("recien escrito"))
+	w.NotifyPath("nuevo.go")
+
+	if !waitFor(t, 3*time.Second, func() bool {
+		_, now := ix.store.Stats()
+		return now > before
+	}) {
+		t.Error("el aviso de escritura no disparó el reindexado")
+	}
+}

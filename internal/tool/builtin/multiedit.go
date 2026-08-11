@@ -15,6 +15,7 @@ func init() { tool.RegisterBuiltin(multiEdit{}) }
 // session-data targets (see SessionDataGuard); workDir, when non-empty, is the
 // directory a relative path resolves against (see resolveIn).
 type multiEdit struct {
+	onWrite WriteNotifier
 	roots   []string
 	guard   SessionDataGuard
 	managed ManagedConfigPaths
@@ -83,7 +84,7 @@ func (m multiEdit) Execute(ctx context.Context, args json.RawMessage) (string, e
 		return "", err
 	}
 
-	src, err := readEditSource(ctx, m.overlay, p.Path)
+	src, err := readEditSource(ctx, m.overlay, p.Path, m.onWrite)
 	if err != nil {
 		return "", fmt.Errorf("read %s: %w", p.Path, err)
 	}

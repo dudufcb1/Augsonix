@@ -126,3 +126,13 @@ func (w *Watcher) fingerprint(ctx context.Context) [32]byte {
 	}
 	return [32]byte(h.Sum(nil))
 }
+
+// NotifyPath es Notify con la forma que esperan las herramientas de escritura.
+// La ruta se ignora a propósito: el escaneo incremental ya sabe qué cambió, y
+// pasarle una lista de archivos duplicaría esa lógica sin ganar nada.
+func (w *Watcher) NotifyPath(string) {
+	if w == nil {
+		return
+	}
+	w.Notify()
+}

@@ -26,7 +26,7 @@ const codeSearchHTTPTimeout = 2 * time.Minute
 // el índice sincronizándose en segundo plano. Devuelve nil sin tocar el
 // registro si está apagada o le falta la credencial: una tool que no puede
 // responder seguiría costando tokens de prefijo en cada turno.
-func addCodeSearch(ctx context.Context, reg *tool.Registry, root string, cfg config.CodeSearchConfig, proxy netclient.ProxySpec, stderr io.Writer, gate *builtin.SearchGate) *codesearch.Index {
+func addCodeSearch(ctx context.Context, reg *tool.Registry, root string, cfg config.CodeSearchConfig, proxy netclient.ProxySpec, stderr io.Writer, gate *builtin.SearchGate, watcher *codesearch.Watcher) *codesearch.Index {
 	if !cfg.Enabled || root == "" {
 		return nil
 	}
@@ -50,8 +50,9 @@ func addCodeSearch(ctx context.Context, reg *tool.Registry, root string, cfg con
 	// que termina mucho antes de que el índice esté al día.
 	bg := context.WithoutCancel(ctx)
 	syncCodeSearch(bg, ix, stderr)
-	if cfg.Watch {
-		go (&codesearch.Watcher{Index: ix}).Run(bg)
+	if cfg.Watch && watcher != nil {
+		watcher.Index = ix
+		go watcher.Run(bg)
 	}
 	return ix
 }
@@ -190,4 +191,15 @@ func openCodeSearchStore(ctx context.Context, dir, workspaceID string, cfg confi
 		return nil, fmt.Errorf("open code index: %w", err)
 	}
 	return store, nil
+}
+
+// newCodeSearchWatcher arma el vigilante antes que las herramientas, para que
+// puedan avisarle de cada escritura desde el primer turno. Arranca sin índice y
+// lo recibe cuando existe; hasta entonces un aviso simplemente no hace nada.
+func newCodeSearchWatcher(cfg config.CodeSearchConfig) *codesearch.Watcher {
+	cfg = cfg.Normalized()
+	if !cfg.Enabled || !cfg.Watch {
+		return nil
+	}
+	return &codesearch.Watcher{}
 }

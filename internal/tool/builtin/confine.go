@@ -96,17 +96,17 @@ func ConfineWebFetch(proxySpec netclient.ProxySpec) tool.Tool {
 // guard additionally rejects writes into Reasonix's own session stores even
 // when the roots would allow them (see SessionDataGuard). managed names the
 // Reasonix-owned config files writable outside the roots after a fresh human
-// approval (see ManagedConfigPaths).
-func ConfineWriters(roots []string, guard SessionDataGuard, managed ManagedConfigPaths) []tool.Tool {
+// approval (see ManagedConfigPaths). onWrite notifies the index of each write.
+func ConfineWriters(roots []string, guard SessionDataGuard, managed ManagedConfigPaths, onWrite WriteNotifier) []tool.Tool {
 	rs := realRoots(roots)
 	return []tool.Tool{
-		writeFile{roots: rs, guard: guard, managed: managed},
-		editFile{roots: rs, guard: guard, managed: managed},
-		multiEdit{roots: rs, guard: guard, managed: managed},
+		writeFile{roots: rs, guard: guard, managed: managed, onWrite: onWrite},
+		editFile{roots: rs, guard: guard, managed: managed, onWrite: onWrite},
+		multiEdit{roots: rs, guard: guard, managed: managed, onWrite: onWrite},
 		moveFile{roots: rs, guard: guard, managed: managed},
-		notebookEdit{roots: rs, guard: guard, managed: managed},
-		deleteRange{roots: rs, guard: guard, managed: managed},
-		deleteSymbol{roots: rs, guard: guard, managed: managed},
+		notebookEdit{roots: rs, guard: guard, managed: managed, onWrite: onWrite},
+		deleteRange{roots: rs, guard: guard, managed: managed, onWrite: onWrite},
+		deleteSymbol{roots: rs, guard: guard, managed: managed, onWrite: onWrite},
 	}
 }
 

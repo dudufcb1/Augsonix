@@ -15,6 +15,7 @@ func init() { tool.RegisterBuiltin(editFile{}) }
 // targets (see SessionDataGuard); workDir, when non-empty, is the directory a
 // relative path resolves against (see resolveIn).
 type editFile struct {
+	onWrite WriteNotifier
 	roots   []string
 	guard   SessionDataGuard
 	managed ManagedConfigPaths
@@ -54,7 +55,7 @@ func (e editFile) Execute(ctx context.Context, args json.RawMessage) (string, er
 		return "", err
 	}
 
-	src, err := readEditSource(ctx, e.overlay, p.Path)
+	src, err := readEditSource(ctx, e.overlay, p.Path, e.onWrite)
 	if err != nil {
 		return "", fmt.Errorf("read %s: %w", p.Path, err)
 	}

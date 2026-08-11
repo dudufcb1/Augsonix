@@ -19,6 +19,7 @@ func init() { tool.RegisterBuiltin(writeFile{}) }
 // unconfined and is overridden per run by ConfineWriters. workDir, when
 // non-empty, is the directory a relative path resolves against (see resolveIn).
 type writeFile struct {
+	onWrite WriteNotifier
 	roots   []string
 	guard   SessionDataGuard
 	managed ManagedConfigPaths
@@ -64,7 +65,7 @@ func (w writeFile) Execute(ctx context.Context, args json.RawMessage) (string, e
 	// of always writing UTF-8, which would silently corrupt a non-UTF-8 file. A
 	// missing file yields enc=UTF8 — the right default for a new one. Reading via
 	// the overlay makes the no-op check see the same buffer Preview does.
-	src, rerr := readEditSource(ctx, w.overlay, p.Path)
+	src, rerr := readEditSource(ctx, w.overlay, p.Path, w.onWrite)
 	if rerr == nil && src.content == p.Content {
 		return fmt.Sprintf("%s already contains the exact content; no changes made", p.Path), nil
 	}
