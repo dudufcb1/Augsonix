@@ -65,6 +65,16 @@ func codeSearchStatus(cfg config.CodeSearchConfig, root string) int {
 	}
 	fmt.Printf("modelo     %s a %d dimensiones\n", cfg.Model, cfg.Dimensions)
 	fmt.Printf("backend    %s\n", cfg.Backend)
+	// Cuántas credenciales hay a mano: con una sola, quedarse sin cuota detiene
+	// el indexado; con varias entra la siguiente sin cortar el trabajo.
+	switch n := boot.CodeSearchKeyring(cfg.APIKeyEnv).Len(); {
+	case n == 0:
+		fmt.Printf("credenciales ninguna — define %s\n", cfg.APIKeyEnv)
+	case n == 1:
+		fmt.Printf("credenciales 1 (sin relevo: agrega %s_2 para que el indexado siga si se agota)\n", cfg.APIKeyEnv)
+	default:
+		fmt.Printf("credenciales %d, con relevo automático\n", n)
+	}
 
 	store, err := openStoreForWorkspace(cfg, ws.ID, ws.Name)
 	if err != nil {
