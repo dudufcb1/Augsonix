@@ -215,10 +215,9 @@ func build(ctx context.Context, opts Options) (*BuildResult, error) {
 		stderr = os.Stderr
 	}
 	root := resolveWorkspaceRoot(opts.WorkspaceRoot)
-	// launchWD es el folder desde donde el usuario LANZÓ reasonix (el cwd del
-	// proceso, ya chdir'ed a --dir si vino). Las tools (bash, rutas relativas)
-	// trabajan contra este, para que "pwd" y las rutas relativas del usuario
-	// coincidan con su ubicación real y no con el git root más cercano.
+	// launchWD es el cwd del proceso (ya chdir'ed a --dir si vino). Las tools
+	// trabajan contra este para que "pwd" y las rutas relativas coincidan con
+	// donde el usuario lanzó reasonix, no con el git root más cercano.
 	launchWD, err := os.Getwd()
 	if err != nil {
 		launchWD = root

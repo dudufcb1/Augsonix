@@ -237,11 +237,10 @@ func NormalizeMaxSubagentDepth(depth int) int {
 }
 
 // ToolHooks fires user-configured shell hooks around each tool call. PreToolUse
-// runs before the call and may block it (block=true; message is the reason fed
-// back to the model); PostToolUse runs after and returns its non-pass outcome
-// messages so the caller can attach them to the tool result (Claude-style hook
-// feedback to the model). It is interface-shaped so the agent stays independent
-// of the hook package — a nil hooks field disables hook firing entirely.
+// runs before and may block it (block=true; message is the reason fed back to
+// the model); PostToolUse runs after and returns its non-pass outcomes for the
+// caller to attach to the tool result. Interface-shaped to keep the agent off
+// the hook package — a nil hooks field disables hook firing entirely.
 type ToolHooks interface {
 	PreToolUse(ctx context.Context, name string, args json.RawMessage) (block bool, message string)
 	PostToolUse(ctx context.Context, name string, args json.RawMessage, result string) []string

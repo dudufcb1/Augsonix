@@ -10,12 +10,9 @@ import (
 	"time"
 )
 
-// media_fallback.go — text-only model support for attached images.
-//
-// Providers that cannot send images (vision off) used to drop them silently,
-// leaving a text-only model blind to an attached screenshot. Instead we save
-// the bytes to disk (best effort) and rewrite the user turn with a note that
-// points the model at the saved path so it can run the `read_image` CLI on it.
+// A provider with vision off used to drop attached images silently, leaving the
+// model blind to a screenshot the user did attach. These save the bytes to disk
+// and rewrite the turn with the path, so the model can run `read_image` on it.
 
 const (
 	maxFallbackImageBytes = 10 * 1024 * 1024

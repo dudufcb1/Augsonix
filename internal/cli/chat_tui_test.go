@@ -3318,8 +3318,8 @@ func TestTextOnlyModelSendsPastedImageRefsForToolUse(t *testing.T) {
 	if !strings.Contains(runner.inputs[0], "@"+path) {
 		t.Fatalf("runner input should retain the image ref context, got %q", runner.inputs[0])
 	}
-	if !strings.Contains(runner.inputs[0], "OCR/image/vision tool") {
-		t.Fatalf("runner input should mention tool-based image handling, got %q", runner.inputs[0])
+	if !strings.Contains(runner.inputs[0], "read_image") {
+		t.Fatalf("runner input should point the model at the read_image CLI, got %q", runner.inputs[0])
 	}
 	if got := strings.Join(m.transcript, "\n"); strings.Contains(got, "will not receive images directly") {
 		t.Fatalf("text-only model should not block image refs that tools can read, transcript=%q", got)

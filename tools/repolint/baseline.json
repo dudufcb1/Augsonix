@@ -2,14 +2,14 @@
   "limits": {
     "banner": 15,
     "commented-code": 0,
-    "complexity": 2079,
-    "essay": 4145,
-    "file-size": 110588,
+    "complexity": 2086,
+    "essay": 4141,
+    "file-size": 110642,
     "function-size": 9212,
     "layering": 1,
     "marker": 0,
     "narrative": 64,
-    "test-file-size": 68765
+    "test-file-size": 68794
   },
   "files": {
     "cmd/e2ebench/main.go": {
@@ -28,7 +28,7 @@
     "desktop/app.go": {
       "complexity": 63,
       "essay": 96,
-      "file-size": 11799,
+      "file-size": 11798,
       "function-size": 381
     },
     "desktop/app_autosave_test.go": {
@@ -429,7 +429,7 @@
     "internal/agent/agent.go": {
       "complexity": 61,
       "essay": 109,
-      "file-size": 2718,
+      "file-size": 2737,
       "function-size": 124
     },
     "internal/agent/ask.go": {
@@ -457,14 +457,14 @@
       "essay": 27
     },
     "internal/agent/compact_projection.go": {
-      "function-size": 24
+      "function-size": 3
     },
     "internal/agent/compact_test.go": {
       "essay": 4
     },
     "internal/agent/coordinator.go": {
       "essay": 17,
-      "file-size": 267
+      "file-size": 268
     },
     "internal/agent/coordinator_test.go": {
       "essay": 3,
@@ -490,10 +490,10 @@
       "function-size": 199
     },
     "internal/agent/execute_one.go": {
-      "complexity": 12,
+      "complexity": 13,
       "essay": 23,
-      "file-size": 115,
-      "function-size": 19
+      "file-size": 120,
+      "function-size": 24
     },
     "internal/agent/extensions.go": {
       "essay": 64
@@ -666,10 +666,10 @@
       "file-size": 216
     },
     "internal/boot/boot.go": {
-      "complexity": 293,
+      "complexity": 294,
       "essay": 102,
-      "file-size": 2212,
-      "function-size": 1839,
+      "file-size": 2219,
+      "function-size": 1846,
       "narrative": 3
     },
     "internal/boot/boot_test.go": {
@@ -804,7 +804,7 @@
     "internal/cli/chat_tui.go": {
       "complexity": 300,
       "essay": 110,
-      "file-size": 4551,
+      "file-size": 4575,
       "function-size": 1196
     },
     "internal/cli/chat_tui_paste.go": {
@@ -812,7 +812,7 @@
     },
     "internal/cli/chat_tui_test.go": {
       "essay": 8,
-      "test-file-size": 3582
+      "test-file-size": 3611
     },
     "internal/cli/cli.go": {
       "complexity": 77,
@@ -1060,12 +1060,12 @@
       "essay": 2
     },
     "internal/control/checkpoint.go": {
-      "essay": 10
+      "essay": 9
     },
     "internal/control/controller.go": {
       "complexity": 11,
-      "essay": 170,
-      "file-size": 5377,
+      "essay": 167,
+      "file-size": 5363,
       "function-size": 77,
       "narrative": 4
     },
@@ -1136,7 +1136,7 @@
     },
     "internal/control/refs.go": {
       "essay": 5,
-      "file-size": 561
+      "file-size": 565
     },
     "internal/control/refs_test.go": {
       "test-file-size": 141
@@ -1163,7 +1163,7 @@
     "internal/control/turn_orchestrator.go": {
       "complexity": 4,
       "essay": 13,
-      "function-size": 78
+      "function-size": 81
     },
     "internal/control/turn_orchestrator_test.go": {
       "essay": 1,
@@ -1522,10 +1522,10 @@
       "file-size": 5
     },
     "internal/provider/anthropic/anthropic.go": {
-      "complexity": 45,
+      "complexity": 47,
       "essay": 36,
-      "file-size": 108,
-      "function-size": 154
+      "file-size": 113,
+      "function-size": 158
     },
     "internal/provider/anthropic/anthropic_test.go": {
       "essay": 1,
@@ -1535,10 +1535,10 @@
       "essay": 8
     },
     "internal/provider/openai/openai.go": {
-      "complexity": 61,
+      "complexity": 64,
       "essay": 40,
-      "file-size": 531,
-      "function-size": 252
+      "file-size": 534,
+      "function-size": 254
     },
     "internal/provider/openai/openai_test.go": {
       "essay": 5,
@@ -1549,7 +1549,7 @@
     },
     "internal/provider/provider.go": {
       "essay": 50,
-      "file-size": 353
+      "file-size": 354
     },
     "internal/provider/responses/responses.go": {
       "complexity": 54,
