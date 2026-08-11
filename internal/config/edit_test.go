@@ -197,15 +197,22 @@ func TestSetDesktopTerminalThemeValidatesPreference(t *testing.T) {
 func TestDesktopCurrencyNormalizesAndRefreshesOfficialPricing(t *testing.T) {
 	c := Default()
 	c.Desktop.Language = "zh"
+	flash, _ := c.Provider("deepseek-flash")
+	// Capture frozen list price before display switches.
+	wantOutput := flash.Price.Output
+	wantCurrency := flash.Price.Currency
 	if err := c.SetDesktopCurrency("usd"); err != nil {
 		t.Fatalf("SetDesktopCurrency USD: %v", err)
 	}
 	if got := c.DesktopCurrency(); got != "USD" {
 		t.Fatalf("desktop currency = %q, want USD", got)
 	}
-	flash, _ := c.Provider("deepseek-flash")
-	if flash.Price == nil || flash.Price.Output != 0.28 || flash.Price.Currency != "$" {
-		t.Fatalf("USD flash price = %+v", flash.Price)
+	if got := c.DisplayCurrencyPref(); got != "USD" {
+		t.Fatalf("display currency pref = %q, want USD", got)
+	}
+	// Display currency must not rewrite frozen provider list prices.
+	if flash.Price == nil || flash.Price.Output != wantOutput || flash.Price.Currency != wantCurrency {
+		t.Fatalf("list price mutated by display switch: %+v", flash.Price)
 	}
 	if err := c.SetDesktopCurrency("auto"); err != nil {
 		t.Fatalf("SetDesktopCurrency auto: %v", err)
@@ -213,8 +220,8 @@ func TestDesktopCurrencyNormalizesAndRefreshesOfficialPricing(t *testing.T) {
 	if got := c.DesktopCurrency(); got != "" {
 		t.Fatalf("auto desktop currency = %q, want empty", got)
 	}
-	if flash.Price == nil || flash.Price.Output != 2 || flash.Price.Currency != "¥" {
-		t.Fatalf("auto Chinese flash price = %+v", flash.Price)
+	if flash.Price == nil || flash.Price.Output != wantOutput || flash.Price.Currency != wantCurrency {
+		t.Fatalf("list price mutated after auto: %+v", flash.Price)
 	}
 	if err := c.SetDesktopCurrency("EUR"); err == nil {
 		t.Fatal("SetDesktopCurrency accepted unsupported EUR")
@@ -628,14 +635,14 @@ func TestSetCompactRatio(t *testing.T) {
 		}
 	}
 
+	// Deprecated snip/force ratios no longer constrain SetCompactRatio.
 	c.Agent.ToolResultSnipRatio = 0.75
-	if err := c.SetCompactRatio(0.7); err == nil {
-		t.Fatal("SetCompactRatio should reject a value at or below the configured snip ratio")
-	}
-	c.Agent.ToolResultSnipRatio = 0.6
 	c.Agent.CompactForceRatio = 0.8
-	if err := c.SetCompactRatio(0.8); err == nil {
-		t.Fatal("SetCompactRatio should reject a value at or above the configured force ratio")
+	if err := c.SetCompactRatio(0.7); err != nil {
+		t.Fatalf("SetCompactRatio(0.7) with legacy snip/force fields: %v", err)
+	}
+	if err := c.SetCompactRatio(0.8); err != nil {
+		t.Fatalf("SetCompactRatio(0.8) with legacy force field: %v", err)
 	}
 }
 
@@ -761,7 +768,7 @@ func TestEffectiveVisionDoesNotInferCustomMimoProxy(t *testing.T) {
 	}
 }
 
-func TestEffectiveVisionDefaultsOfficialDeepSeekToTextOnlyButAllowsExplicitModels(t *testing.T) {
+func TestEffectiveVisionRejectsOfficialDeepSeekOverridesButPreservesCustomGateways(t *testing.T) {
 	for _, endpoint := range []struct {
 		kind    string
 		baseURL string
@@ -771,19 +778,28 @@ func TestEffectiveVisionDefaultsOfficialDeepSeekToTextOnlyButAllowsExplicitModel
 		{kind: "openai", baseURL: "https://eu.deepseek.com/v1"},
 		{kind: "anthropic", baseURL: "https://api.deepseek.com/anthropic"},
 	} {
+		visionOn := true
 		official := &ProviderEntry{
 			Name:              "deepseek",
 			Kind:              endpoint.kind,
 			BaseURL:           endpoint.baseURL,
 			Model:             "deepseek-v4-pro",
 			Vision:            true,
+			VisionModels:      []string{"deepseek-v4-pro"},
+			visionOverride:    &visionOn,
 			ReasoningProtocol: ReasoningProtocolDeepSeek,
+		}
+		if CanConfigureVision(official) {
+			t.Fatalf("official DeepSeek endpoint %q must not allow vision configuration", endpoint.baseURL)
 		}
 		if EffectiveVision(official) {
 			t.Fatalf("official DeepSeek endpoint %q must remain text-only", endpoint.baseURL)
 		}
 		if ExplicitModelVision(official) {
-			t.Fatalf("provider-wide vision must not count as an explicit model capability for %q", endpoint.baseURL)
+			t.Fatalf("official DeepSeek endpoint %q must not expose ignored vision metadata as usable", endpoint.baseURL)
+		}
+		if !official.HasVisionModel("deepseek-v4-pro") {
+			t.Fatalf("official DeepSeek endpoint %q lost persisted vision metadata instead of ignoring it", endpoint.baseURL)
 		}
 	}
 
@@ -794,8 +810,8 @@ func TestEffectiveVisionDefaultsOfficialDeepSeekToTextOnlyButAllowsExplicitModel
 		Model:        "deepseek-v5-vision",
 		VisionModels: []string{"deepseek-v5-vision"},
 	}
-	if !EffectiveVision(future) || !ExplicitModelVision(future) {
-		t.Fatal("model listed in vision_models must opt in on the official DeepSeek endpoint")
+	if EffectiveVision(future) {
+		t.Fatal("a future model name must not bypass the official DeepSeek wire constraint")
 	}
 
 	visionOn := true
@@ -812,8 +828,8 @@ func TestEffectiveVisionDefaultsOfficialDeepSeekToTextOnlyButAllowsExplicitModel
 	if !ok {
 		t.Fatal("ResolveModel did not find explicit future DeepSeek model")
 	}
-	if !EffectiveVision(overridden) || !ExplicitModelVision(overridden) {
-		t.Fatal("model_overrides vision=true must opt in on the official DeepSeek endpoint")
+	if EffectiveVision(overridden) {
+		t.Fatal("model_overrides vision=true must not bypass the official DeepSeek wire constraint")
 	}
 
 	custom := &ProviderEntry{
@@ -824,8 +840,13 @@ func TestEffectiveVisionDefaultsOfficialDeepSeekToTextOnlyButAllowsExplicitModel
 		Vision:            true,
 		ReasoningProtocol: ReasoningProtocolDeepSeek,
 	}
-	if !EffectiveVision(custom) {
+	if !CanConfigureVision(custom) || !EffectiveVision(custom) {
 		t.Fatal("explicit vision=true must remain available for custom DeepSeek gateways")
+	}
+	custom.Vision = false
+	custom.VisionModels = []string{"deepseek-v4-pro"}
+	if !ExplicitModelVision(custom) {
+		t.Fatal("custom DeepSeek gateway must expose positive model-scoped vision metadata")
 	}
 }
 

@@ -37,7 +37,7 @@ func TestCompatibilityRewindRequiresConfirmationForPartialCoverage(t *testing.T)
 		WorkspaceRoot: root,
 		Sink:          event.Discard,
 	})
-	c.beginCheckpoint("edit partial.txt")
+	c.beginCheckpoint(context.Background(), "edit partial.txt")
 	c.mutationObserver.BeforeMutation("partial.txt", "write_file", checkpoint.CaptureBeforeMutation)
 	if err := os.WriteFile(path, []byte("after"), 0o644); err != nil {
 		t.Fatal(err)
@@ -301,7 +301,7 @@ func TestPositionalCompressionPreservesCheckpointLineage(t *testing.T) {
 	if err != nil || !ok {
 		t.Fatalf("load projection sidecar: ok=%v err=%v", ok, err)
 	}
-	if state.LastTrigger != agent.CompactionTriggerManual || state.Projection.ProjectionVersion == 0 {
+	if state.LastReceipt == nil || state.LastReceipt.Trigger != agent.CompactionTriggerManual || state.Projection.ProjectionVersion == 0 {
 		t.Fatalf("projection state = %+v", state)
 	}
 	if _, ok := c.checkpoints.boundary(1); !ok {
@@ -334,7 +334,7 @@ func TestEditPromptPersistsOriginalPrompt(t *testing.T) {
 			msgs := loaded.Snapshot()
 			if len(msgs) >= 2 {
 				last := msgs[len(msgs)-2]
-				if last.Role == provider.RoleUser && last.Content == "edited prompt" {
+				if last.Role == provider.RoleUser && agent.StripTransientUserBlocks(last.Content) == "edited prompt" {
 					break
 				}
 			}
@@ -346,7 +346,7 @@ func TestEditPromptPersistsOriginalPrompt(t *testing.T) {
 	}
 	msgs := loaded.Snapshot()
 	last := msgs[len(msgs)-2]
-	if last.Role != provider.RoleUser || last.Content != "edited prompt" {
+	if last.Role != provider.RoleUser || agent.StripTransientUserBlocks(last.Content) != "edited prompt" {
 		t.Fatalf("last user message = %+v, want edited prompt", last)
 	}
 	if !last.Edited || last.Original != "second prompt" {

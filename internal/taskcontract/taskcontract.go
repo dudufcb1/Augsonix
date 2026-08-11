@@ -34,6 +34,20 @@ const (
 	// Stale marks a satisfaction whose proof predates the latest mutation:
 	// it was true once, and must be re-proven against the current code.
 	Stale
+	// Suppressed marks a check that cannot run for a structured host reason
+	// (user forbid, permission deny, dependency unavailable, reviewer unavailable).
+	// Suppressed is never treated as Satisfied.
+	Suppressed
+)
+
+// SuppressReason classifies why a check or requirement was suppressed.
+type SuppressReason string
+
+const (
+	SuppressUserForbidden         SuppressReason = "user_forbidden"
+	SuppressPermissionDenied      SuppressReason = "permission_denied"
+	SuppressDependencyUnavailable SuppressReason = "dependency_unavailable"
+	SuppressReviewerUnavailable   SuppressReason = "reviewer_unavailable"
 )
 
 // EvidenceKind classifies what a receipt proved.
@@ -67,6 +81,8 @@ type Requirement struct {
 	Evidence []EvidenceRef
 	Auto     bool
 	AutoKind EvidenceKind
+	// SuppressReason is set when Status is Suppressed.
+	SuppressReason SuppressReason
 }
 
 // CheckKind selects what proves a check: a verification command, or any
@@ -85,6 +101,8 @@ type Check struct {
 	Command  string
 	Status   Status
 	Evidence []EvidenceRef
+	// SuppressReason is set when Status is Suppressed.
+	SuppressReason SuppressReason
 }
 
 // Scope is where the task is expected to act, from prompt-shape signals.
@@ -140,11 +158,20 @@ func Atomic(input string) *Contract {
 // PlanFacts is a completed full plan's contract-relevant output, extracted
 // by the coordinator (plain data; this package never sees the plan text).
 type PlanFacts struct {
-	AcceptanceCriteria []string
-	Regressions        []string // must-keep-passing criteria
-	Verifications      []string // command-level checks; "" entries mean any
+	AcceptanceCriteria []PlanCriterion
+	Regressions        []PlanCriterion // must-keep-passing criteria
+	Optional           []PlanCriterion // nice-to-have; recorded but never blocking
+	Verifications      []string        // command-level checks; "" entries mean any
 	Risky              bool
 	Touchpoints        []string
+}
+
+// PlanCriterion is one criterion with the identity the plan gave it. The id
+// travels rather than being regenerated here: a proof cites the criterion the
+// user approved, and a boundary that re-keys identity breaks that citation.
+type PlanCriterion struct {
+	ID   string
+	Text string
 }
 
 // FromPlan builds the contract straight from a plan the planner already
@@ -152,16 +179,20 @@ type PlanFacts struct {
 // instead of re-deriving a parallel set: Planner → Contract → Executor.
 func FromPlan(input string, facts PlanFacts) *Contract {
 	c := New(input)
-	for i, text := range facts.AcceptanceCriteria {
-		c.Requirements = append(c.Requirements, Requirement{
-			ID: fmt.Sprintf("r%d", i+1), Kind: "behavior", Text: text, Required: true,
-		})
+	add := func(criteria []PlanCriterion, kind, fallback string, required bool) {
+		for i, criterion := range criteria {
+			id := criterion.ID
+			if id == "" {
+				id = fmt.Sprintf("%s%d", fallback, i+1)
+			}
+			c.Requirements = append(c.Requirements, Requirement{
+				ID: id, Kind: kind, Text: criterion.Text, Required: required,
+			})
+		}
 	}
-	for i, text := range facts.Regressions {
-		c.Requirements = append(c.Requirements, Requirement{
-			ID: fmt.Sprintf("g%d", i+1), Kind: "regression", Text: text, Required: true,
-		})
-	}
+	add(facts.AcceptanceCriteria, "behavior", "r", true)
+	add(facts.Regressions, "regression", "g", true)
+	add(facts.Optional, "behavior", "o", false)
 	for _, command := range facts.Verifications {
 		c.AddCheck(command)
 	}
@@ -383,6 +414,9 @@ const (
 	VerdictContinue
 	VerdictBlocked
 	VerdictComplete
+	// VerdictPartial means mutations may be kept but verification or review
+	// was forbidden or unavailable. Goals must not auto-complete on Partial.
+	VerdictPartial
 )
 
 func (v Verdict) String() string {
@@ -393,6 +427,8 @@ func (v Verdict) String() string {
 		return "blocked"
 	case VerdictComplete:
 		return "complete"
+	case VerdictPartial:
+		return "partial"
 	default:
 		return "uncertain"
 	}
@@ -402,12 +438,13 @@ func (v Verdict) String() string {
 // Missing or stale evidence means Continue (the next action is knowable);
 // a requirement explicitly resolved Failed — an arbiter's judgment that it
 // cannot be met — means Blocked; everything fresh-satisfied means Complete.
+// Suppressed required evidence yields Partial (never Complete).
 // Only a contract with nothing to prove returns Uncertain.
 func (c *Contract) GoalVerdict() Verdict {
 	if len(c.Requirements) == 0 && len(c.Checks) == 0 {
 		return VerdictUncertain
 	}
-	missing, blocked := false, false
+	missing, blocked, partial := false, false, false
 	for _, req := range c.Requirements {
 		if !req.Required {
 			continue
@@ -415,12 +452,19 @@ func (c *Contract) GoalVerdict() Verdict {
 		switch req.Status {
 		case Failed:
 			blocked = true
+		case Suppressed:
+			partial = true
 		case Pending, Stale:
 			missing = true
 		}
 	}
 	for _, check := range c.Checks {
-		if check.Status != Satisfied {
+		switch check.Status {
+		case Satisfied:
+			// ok
+		case Suppressed:
+			partial = true
+		default:
 			// A failed check run is actionable — fix it and re-run — so it
 			// keeps the goal in Continue, never Blocked.
 			missing = true
@@ -431,10 +475,72 @@ func (c *Contract) GoalVerdict() Verdict {
 		return VerdictContinue
 	case blocked:
 		return VerdictBlocked
+	case partial:
+		return VerdictPartial
 	case c.Complete():
 		return VerdictComplete
 	}
 	return VerdictUncertain
+}
+
+// SuppressCheck marks the first matching check (by command; empty matches any
+// unsatisfied command check) as Suppressed with a structured reason.
+func (c *Contract) SuppressCheck(command string, reason SuppressReason) bool {
+	if c == nil {
+		return false
+	}
+	for i := range c.Checks {
+		if command != "" && c.Checks[i].Command != command {
+			continue
+		}
+		if c.Checks[i].Status == Satisfied {
+			continue
+		}
+		c.Checks[i].Status = Suppressed
+		c.Checks[i].SuppressReason = reason
+		return true
+	}
+	return false
+}
+
+// SuppressRequirement marks a requirement as Suppressed with a structured reason.
+func (c *Contract) SuppressRequirement(id string, reason SuppressReason) bool {
+	if c == nil {
+		return false
+	}
+	for i := range c.Requirements {
+		if c.Requirements[i].ID != id {
+			continue
+		}
+		c.Requirements[i].Status = Suppressed
+		c.Requirements[i].SuppressReason = reason
+		return true
+	}
+	return false
+}
+
+// HasSuppressed reports whether any required requirement or check is Suppressed.
+func (c *Contract) HasSuppressed() bool {
+	if c == nil {
+		return false
+	}
+	for _, req := range c.Requirements {
+		if req.Required && req.Status == Suppressed {
+			return true
+		}
+	}
+	for _, check := range c.Checks {
+		if check.Status == Suppressed {
+			return true
+		}
+	}
+	return false
+}
+
+// Complete reports whether every required requirement and every check is
+// satisfied — Suppressed never counts as complete.
+func (c *Contract) CompleteStrict() bool {
+	return c.Complete() && !c.HasSuppressed()
 }
 
 // GateMutation is the mutation-after-green guard: while anything is
@@ -497,6 +603,8 @@ func directiveFor(status Status, verb string) string {
 		return "evidence predates the latest mutation — re-" + verb + " it"
 	case Failed:
 		return "last evidence shows failure — fix it, then re-" + verb
+	case Suppressed:
+		return "suppressed by host constraint — not counted as passed"
 	default:
 		return "no fresh evidence — " + verb + " it"
 	}
@@ -535,7 +643,14 @@ func (c *Contract) Outstanding() []string {
 	var out []string
 	for _, req := range c.Requirements {
 		if req.Required && req.Status != Satisfied {
-			out = append(out, fmt.Sprintf("requirement %s: %s", req.ID, req.Text))
+			// Stale is said out loud here as it already is for checks: "verify
+			// it" and "re-verify it because the code moved" are different
+			// instructions, and only one of them is actionable after a change.
+			entry := fmt.Sprintf("requirement %s: %s", req.ID, req.Text)
+			if req.Status == Stale {
+				entry += " (stale: re-verify after the latest mutation)"
+			}
+			out = append(out, entry)
 		}
 	}
 	for _, check := range c.Checks {

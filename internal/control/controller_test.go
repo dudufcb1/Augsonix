@@ -33,6 +33,7 @@ import (
 	"reasonix/internal/pluginpkg"
 	"reasonix/internal/provider"
 	"reasonix/internal/skill"
+	"reasonix/internal/store"
 	"reasonix/internal/tool"
 )
 
@@ -140,15 +141,12 @@ func (r cancelingRunner) Run(_ context.Context, _ string) error {
 	return nil
 }
 
-func TestContextSnapshotIncludesCompletionTokens(t *testing.T) {
+// The gauge must measure what the trigger measures. Reporting the previous
+// turn's billed usage is how a session displayed 8% while it was compacting.
+func TestContextSnapshotMeasuresTheTriggerInput(t *testing.T) {
 	prov := &scriptedTurns{turns: [][]provider.Chunk{{
 		{Type: provider.ChunkText, Text: "ok"},
-		{Type: provider.ChunkUsage, Usage: &provider.Usage{
-			PromptTokens:     6840,
-			CompletionTokens: 48,
-			TotalTokens:      6888,
-			ReasoningTokens:  48,
-		}},
+		{Type: provider.ChunkUsage, Usage: &provider.Usage{PromptTokens: 6840, CompletionTokens: 48, TotalTokens: 6888, ReasoningTokens: 48}},
 		{Type: provider.ChunkDone},
 	}}}
 	ag := agent.New(prov, tool.NewRegistry(), agent.NewSession("sys"), agent.Options{ContextWindow: 1_000_000}, event.Discard)
@@ -158,9 +156,10 @@ func TestContextSnapshotIncludesCompletionTokens(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	want := c.ContextMaintenanceSnapshot().ProjectedTokens
 	used, window := c.ContextSnapshot()
-	if used != 6888 || window != 1_000_000 {
-		t.Fatalf("ContextSnapshot() = (%d, %d), want (6888, 1000000)", used, window)
+	if used != want || used == 6888 || window != 1_000_000 {
+		t.Fatalf("ContextSnapshot() = (%d, %d), want (%d, 1000000): the gauge reads the trigger's live input, never the last turn's 6888", used, window, want)
 	}
 }
 
@@ -435,6 +434,96 @@ func TestRunTurnSnapshotsActivityWhenTranscriptChanges(t *testing.T) {
 	}
 }
 
+func TestFinishInFlightTurnKeepsMarkerUntilSnapshotSucceeds(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "session.jsonl")
+	sess := agent.NewSession("sys")
+	exec := agent.New(nil, nil, sess, agent.Options{}, event.Discard)
+	c := New(Options{Executor: exec, SessionDir: dir, SessionPath: path, Label: "test"})
+
+	start := sess.Len()
+	marker := c.markInFlightTurn(start, true)
+	if marker.ID == "" {
+		t.Fatal("in-flight marker was not created")
+	}
+	sess.Add(provider.Message{Role: provider.RoleUser, Content: "must become durable"})
+	if err := os.WriteFile(store.SessionEventLog(path), []byte(`{"schema_version":99,"type":"replace","messages":[]}`+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	c.finishInFlightTurn(start, marker)
+	meta, ok, err := agent.LoadBranchMeta(path)
+	if err != nil || !ok || meta.InFlightTurn == nil || meta.InFlightTurn.ID != marker.ID {
+		t.Fatalf("marker after failed snapshot = %+v ok=%v err=%v, want original marker", meta.InFlightTurn, ok, err)
+	}
+	if _, err := os.Stat(path); !os.IsNotExist(err) {
+		t.Fatalf("failed snapshot unexpectedly wrote transcript: stat err=%v", err)
+	}
+
+	if err := os.Remove(store.SessionEventLog(path)); err != nil {
+		t.Fatal(err)
+	}
+	c.finishInFlightTurn(start, marker)
+	meta, ok, err = agent.LoadBranchMeta(path)
+	if err != nil || !ok {
+		t.Fatalf("LoadBranchMeta after successful snapshot ok=%v err=%v", ok, err)
+	}
+	if meta.InFlightTurn != nil {
+		t.Fatalf("marker survived successful snapshot: %+v", meta.InFlightTurn)
+	}
+	loaded, err := agent.LoadSession(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := loaded.Snapshot(); len(got) != 2 || got[1].Content != "must become durable" {
+		t.Fatalf("durable transcript = %+v", got)
+	}
+}
+
+func TestResumePreservesTranscriptWhenCrashFollowsFinalSnapshot(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "post-snapshot-crash.jsonl")
+	sess := agent.NewSession("sys")
+	if err := sess.Save(path); err != nil {
+		t.Fatal(err)
+	}
+	exec := agent.New(nil, nil, sess, agent.Options{}, event.Discard)
+	c := New(Options{Executor: exec, SessionDir: dir, SessionPath: path, Label: "test"})
+	marker := c.markInFlightTurn(sess.Len(), true)
+	sess.Add(provider.Message{Role: provider.RoleUser, Content: "completed prompt"})
+	sess.Add(provider.Message{Role: provider.RoleAssistant, Content: "completed answer"})
+	digest, err := sess.ContentDigest()
+	if err != nil {
+		t.Fatal(err)
+	}
+	committedMarker, matched, err := agent.PrepareSessionInFlightTurnCommit(path, marker, digest)
+	if err != nil || !matched {
+		t.Fatalf("PrepareSessionInFlightTurnCommit matched=%v err=%v", matched, err)
+	}
+	if err := sess.SaveSnapshot(path); err != nil {
+		t.Fatal(err)
+	}
+
+	loaded, err := agent.LoadSession(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	recoveredExec := agent.New(nil, nil, loaded, agent.Options{}, event.Discard)
+	recovered := New(Options{Executor: recoveredExec, SessionDir: dir, SessionPath: path, Label: "test"})
+	recovered.recoverInterruptedTurn(path)
+	msgs := recoveredExec.Session().Snapshot()
+	if len(msgs) != 3 || msgs[2].Content != "completed answer" || msgs[2].LocalOnly {
+		t.Fatalf("post-snapshot recovery changed durable transcript: %+v", msgs)
+	}
+	meta, ok, err := agent.LoadBranchMeta(path)
+	if err != nil || !ok {
+		t.Fatalf("LoadBranchMeta ok=%v err=%v", ok, err)
+	}
+	if meta.InFlightTurn != nil {
+		t.Fatalf("committed marker survived recovery: %+v (expected %+v)", meta.InFlightTurn, committedMarker)
+	}
+}
+
 func TestRunInjectsParentSessionForJobs(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "session.jsonl")
@@ -539,7 +628,7 @@ func TestGoalStatePersistsNextToSessionPath(t *testing.T) {
 	if err := json.Unmarshal(data, &state); err != nil {
 		t.Fatal(err)
 	}
-	if state.Goal != "fix the typo" || state.Status != GoalStatusRunning || state.ResearchMode != GoalResearchOn || !state.Strict {
+	if state.Goal != "fix the typo" || state.Status != GoalStatusRunning || state.BudgetClass != budgetClassResearch || state.ResearchMode != GoalResearchOff || !state.Strict {
 		t.Fatalf("goal state = %+v, want running strict research goal", state)
 	}
 }
@@ -559,7 +648,7 @@ func TestSetGoalDurableRestoresInMemoryStateWhenSidecarWriteFails(t *testing.T) 
 	}
 	c.goals.setStatePath(filepath.Join(notDirectory, "goal.json"))
 
-	if err := c.SetGoalDurable("replace the goal", ""); err == nil {
+	if err := c.SetGoalDurable("replace the goal"); err == nil {
 		t.Fatal("SetGoalDurable succeeded despite an invalid sidecar parent")
 	}
 	if got := c.Goal(); got != "keep the old goal" {
@@ -570,7 +659,7 @@ func TestSetGoalDurableRestoresInMemoryStateWhenSidecarWriteFails(t *testing.T) 
 	}
 }
 
-func TestSetGoalDurableRollsBackAutoResearchTaskAndNotice(t *testing.T) {
+func TestSetGoalDurableNeverCreatesLegacyArchive(t *testing.T) {
 	root := t.TempDir()
 	path := filepath.Join(root, "session.jsonl")
 	sink := &noticeSink{}
@@ -592,18 +681,14 @@ func TestSetGoalDurableRollsBackAutoResearchTaskAndNotice(t *testing.T) {
 	c.goals.setStatePath(filepath.Join(notDirectory, "goal.json"))
 
 	goal := "investigate the root cause and fix the performance regression, then verify with tests"
-	if err := c.SetGoalDurable(goal, ""); err == nil {
+	if err := c.SetGoalDurable(goal); err == nil {
 		t.Fatal("SetGoalDurable succeeded despite an invalid sidecar parent")
 	}
-	entries, err := os.ReadDir(filepath.Join(root, ".reasonix", "autoresearch"))
-	if err != nil && !os.IsNotExist(err) {
-		t.Fatalf("read autoresearch dir: %v", err)
-	}
-	if len(entries) != 0 {
-		t.Fatalf("autoresearch task count after rollback = %d, want 0", len(entries))
+	if _, err := os.Stat(filepath.Join(root, ".reasonix", "autoresearch")); !os.IsNotExist(err) {
+		t.Fatalf("durable Goal update created legacy archive: %v", err)
 	}
 	for _, notice := range sink.notices() {
-		if strings.Contains(notice, "autoresearch task created") || strings.Contains(notice, "autoresearch task resumed") {
+		if strings.Contains(strings.ToLower(notice), "autoresearch task created") || strings.Contains(strings.ToLower(notice), "legacy research archive loaded") {
 			t.Fatalf("durable failure emitted success notice %q", notice)
 		}
 	}
@@ -686,7 +771,7 @@ func TestResumeRestoresRunningAutoResearchGoalFromSidecar(t *testing.T) {
 	if err := os.MkdirAll(filepath.Join(root, ".reasonix", "autoresearch", taskID, "logs"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(root, ".reasonix", "autoresearch", taskID, "state", "task_spec.json"), []byte(`{"id":"investigate-runtime-resume","goal":"investigate runtime resume","status":"running","created_at":"2026-06-30T00:00:00Z","updated_at":"2026-06-30T00:00:00Z","success_criteria":[{"id":"criterion-1","description":"resume keeps AutoResearch active","required":true}]}`), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(root, ".reasonix", "autoresearch", taskID, "state", "task_spec.json"), []byte(`{"task_id":"investigate-runtime-resume","goal":"investigate runtime resume","allowed_operations":{"write":true},"success_criteria":[{"id":"criterion-1","description":"resume keeps Goal active","required":true}]}`), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(filepath.Join(root, ".reasonix", "autoresearch", taskID, "state", "progress.json"), []byte(`{"task_id":"investigate-runtime-resume","iteration":2,"current_direction":"verify resume","stale_count":1,"pivot_count":0,"updated_at":"2026-06-30T00:00:00Z"}`), 0o644); err != nil {
@@ -714,8 +799,13 @@ func TestResumeRestoresRunningAutoResearchGoalFromSidecar(t *testing.T) {
 		t.Fatalf("Goal() after resume = %q, want running goal from sidecar", got)
 	}
 	composed := c.Compose("continue")
-	if !strings.Contains(composed, "<autoresearch-runtime>") || !strings.Contains(composed, "task_id: "+taskID) {
-		t.Fatalf("Compose after resume missing AutoResearch runtime for %q:\n%s", taskID, composed)
+	if strings.Contains(strings.ToLower(composed), "autoresearch") {
+		t.Fatalf("Compose after resume exposed removed AutoResearch protocol:\n%s", composed)
+	}
+	// The class-derived turn quota is retired: a migrated legacy Goal is
+	// bounded by what the user configures, not by a number derived from its text.
+	if got := c.GoalRuntime().TurnsLimit; got != 0 {
+		t.Fatalf("resumed legacy Goal turn budget = %d, want it retired", got)
 	}
 }
 
@@ -1039,18 +1129,24 @@ func TestRecoverInterruptedTurnAfterCompactionRelocatesVisibleTurn(t *testing.T)
 		t.Fatalf("LoadBranchMeta ok=%v err=%v meta=%+v", ok, err, meta)
 	}
 
-	compacted := agent.NewSession("sys")
-	compacted.Add(provider.Message{Role: provider.RoleUser, Content: "<compaction-summary>\nold work\n</compaction-summary>"})
-	compacted.Add(provider.Message{Role: provider.RoleUser, Content: "update a.txt", CreatedAt: meta.InFlightTurn.StartedAt.UnixMilli() + 1})
-	compacted.Add(provider.Message{Role: provider.RoleAssistant, ToolCalls: []provider.ToolCall{{
-		ID: "write-1", Name: "write_file", Arguments: `{"path":"a.txt","content":"ok"}`,
-	}}})
-	compacted.Add(provider.Message{Role: provider.RoleTool, ToolCallID: "write-1", Name: "write_file", Content: "wrote a.txt"})
-	compacted.Add(provider.Message{Role: provider.RoleAssistant, Content: "partial final answer", ReasoningContent: "private partial reasoning"})
+	compacted, err := agent.LoadSession(path)
+	if err != nil {
+		t.Fatalf("Load compacting owner: %v", err)
+	}
+	compacted.Replace([]provider.Message{
+		{Role: provider.RoleSystem, Content: "sys"},
+		{Role: provider.RoleUser, Content: "<compaction-summary>\nold work\n</compaction-summary>"},
+		{Role: provider.RoleUser, Content: "update a.txt", CreatedAt: meta.InFlightTurn.StartedAt.UnixMilli() + 1},
+		{Role: provider.RoleAssistant, ToolCalls: []provider.ToolCall{{
+			ID: "write-1", Name: "write_file", Arguments: `{"path":"a.txt","content":"ok"}`,
+		}}},
+		{Role: provider.RoleTool, ToolCallID: "write-1", Name: "write_file", Content: "wrote a.txt"},
+		{Role: provider.RoleAssistant, Content: "partial final answer", ReasoningContent: "private partial reasoning"},
+	})
 	if compacted.Len() >= staleStart {
 		t.Fatalf("test setup did not stale boundary: compacted=%d start=%d", compacted.Len(), staleStart)
 	}
-	if err := compacted.Save(path); err != nil {
+	if err := compacted.SaveRewrite(path); err != nil {
 		t.Fatalf("Save compacted: %v", err)
 	}
 
@@ -1085,6 +1181,85 @@ func TestRecoverInterruptedTurnAfterCompactionRelocatesVisibleTurn(t *testing.T)
 	}
 	if meta.InFlightTurn != nil {
 		t.Fatalf("in-flight marker survived recovery: %+v", meta.InFlightTurn)
+	}
+}
+
+// TestResumePreservesNewerWALAfterStaleMarker reproduces the destructive shape
+// from issue #7956: the compatibility anchor is still at 1149, while the native
+// event log has a newer 1315-message replace snapshot and an old marker at the
+// anchor boundary. Recovery must keep the WAL state and clear only the stale
+// marker instead of writing a backwards replace event.
+func TestResumePreservesNewerWALAfterStaleMarker(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "wal-newer-than-anchor.jsonl")
+
+	sess := agent.NewSession("sys")
+	for sess.Len() < 1149 {
+		role := provider.RoleAssistant
+		if sess.Len()%2 == 1 {
+			role = provider.RoleUser
+		}
+		sess.Add(provider.Message{Role: role, Content: fmt.Sprintf("base-%d", sess.Len())})
+	}
+	anchor := sess.Snapshot()
+	if err := sess.Save(path); err != nil {
+		t.Fatalf("Save anchor: %v", err)
+	}
+	if err := agent.MarkSessionInFlightTurn(path, 1149, false); err != nil {
+		t.Fatalf("MarkSessionInFlightTurn: %v", err)
+	}
+
+	sess.Add(provider.Message{Role: provider.RoleUser, Content: "synthetic-start"})
+	for i := 1; i < 166; i++ {
+		role := provider.RoleAssistant
+		if i == 40 || i == 90 || i == 140 {
+			role = provider.RoleUser
+		}
+		sess.Add(provider.Message{Role: role, Content: fmt.Sprintf("tail-%d", i)})
+	}
+	if sess.Len() != 1315 {
+		t.Fatalf("test setup length = %d, want 1315", sess.Len())
+	}
+	if err := sess.SaveRewrite(path); err != nil {
+		t.Fatalf("Save newer WAL snapshot: %v", err)
+	}
+
+	var anchorJSON strings.Builder
+	for _, msg := range anchor {
+		encoded, err := json.Marshal(msg)
+		if err != nil {
+			t.Fatalf("marshal anchor message: %v", err)
+		}
+		anchorJSON.Write(encoded)
+		anchorJSON.WriteByte('\n')
+	}
+	if err := os.WriteFile(path, []byte(anchorJSON.String()), 0o600); err != nil {
+		t.Fatalf("restore stale compatibility anchor: %v", err)
+	}
+
+	loaded, err := agent.LoadSession(path)
+	if err != nil {
+		t.Fatalf("LoadSession: %v", err)
+	}
+	if loaded.Len() != 1315 {
+		t.Fatalf("WAL replay length = %d, want 1315", loaded.Len())
+	}
+	exec := agent.New(nil, nil, loaded, agent.Options{}, event.Discard)
+	c := New(Options{Executor: exec, SessionDir: dir, SessionPath: path, Label: "test"})
+	c.recoverInterruptedTurn(path)
+
+	if got := exec.Session().Len(); got != 1315 {
+		t.Fatalf("recovery shrank newer WAL transcript to %d, want 1315", got)
+	}
+	meta, ok, err := agent.LoadBranchMeta(path)
+	if err != nil || !ok {
+		t.Fatalf("LoadBranchMeta ok=%v err=%v", ok, err)
+	}
+	if meta.InFlightTurn != nil {
+		t.Fatalf("stale marker survived safe recovery: %+v", meta.InFlightTurn)
+	}
+	if meta.Revision != 2 {
+		t.Fatalf("safe recovery rewrote WAL revision to %d, want unchanged 2", meta.Revision)
 	}
 }
 
@@ -2082,7 +2257,7 @@ func (s *noticeSink) lastNotice() (event.Event, bool) {
 	return event.Event{}, false
 }
 
-func TestSnapshotConflictAtRecoveryDepthCapForceSavesCurrentBranch(t *testing.T) {
+func TestSnapshotConflictAtRecoveryDepthCapIsolatesCurrentBranch(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "session.jsonl")
 	disk := agent.NewSession("sys")
@@ -2114,60 +2289,49 @@ func TestSnapshotConflictAtRecoveryDepthCapForceSavesCurrentBranch(t *testing.T)
 	if err := c.Snapshot(); err != nil {
 		t.Fatalf("Snapshot: %v", err)
 	}
-	if got := c.SessionPath(); got != path {
-		t.Fatalf("session path = %q, want unchanged %q (no new fork)", got, path)
+	if got := c.SessionPath(); got == path || !strings.Contains(got, "-recovery-") {
+		t.Fatalf("session path = %q, want an isolated recovery branch", got)
 	}
 	forks, err := filepath.Glob(filepath.Join(dir, "*-recovery-*.jsonl"))
 	if err != nil {
 		t.Fatalf("glob: %v", err)
 	}
-	if len(forks) != 0 {
-		t.Fatalf("depth cap still forked: %v", forks)
+	filteredForks := forks[:0]
+	for _, fork := range forks {
+		if !strings.HasSuffix(fork, ".events.jsonl") {
+			filteredForks = append(filteredForks, fork)
+		}
+	}
+	forks = filteredForks
+	if len(forks) != 1 {
+		t.Fatalf("depth cap should preserve one isolated fork: %v", forks)
 	}
 	loaded, err := agent.LoadSession(path)
 	if err != nil {
 		t.Fatalf("LoadSession: %v", err)
 	}
-	if got := loaded.Messages[len(loaded.Messages)-1].Content; got != "local second" {
-		t.Fatalf("disk tail = %q, want force-saved local transcript", got)
+	if got := loaded.Messages[len(loaded.Messages)-1].Content; got != "disk second" {
+		t.Fatalf("canonical disk tail = %q, want newer disk transcript", got)
 	}
 	notices := sink.notices()
-	if len(notices) == 0 || !strings.Contains(notices[len(notices)-1], "saved the current conflict copy in place") {
+	if len(notices) == 0 || !strings.Contains(notices[len(notices)-1], "saved the current conflict copy in an isolated recovery branch") {
 		t.Fatalf("notices = %v, want depth-cap notice", notices)
 	}
 	notice, ok := sink.lastNotice()
 	if !ok || notice.Code != event.NoticeCodeSessionRecoveryDepthCap || notice.Audience != event.NoticeAudienceOperator {
 		t.Fatalf("depth-cap notice = %+v, want typed operator recovery notice", notice)
 	}
-	if stale.NeedsRewriteSave() {
-		t.Fatal("rewrite baseline not re-anchored by depth-cap force save")
-	}
-
-	foreign := agent.NewSession("sys")
-	foreign.Add(provider.Message{Role: provider.RoleUser, Content: "first"})
-	foreign.Add(provider.Message{Role: provider.RoleAssistant, Content: "one"})
-	foreign.Add(provider.Message{Role: provider.RoleUser, Content: "foreign second"})
-	if err := foreign.Save(path); err != nil {
-		t.Fatalf("Save foreign: %v", err)
-	}
-	meta, ok, err = agent.LoadBranchMeta(path)
-	if err != nil || !ok {
-		t.Fatalf("LoadBranchMeta foreign ok=%v err=%v", ok, err)
-	}
-	meta.Recovered = true
-	meta.RecoveryDepth = agent.SessionRecoveryMaxDepth
-	if err := agent.SaveBranchMeta(path, meta); err != nil {
-		t.Fatalf("SaveBranchMeta foreign: %v", err)
-	}
+	// The isolated branch was saved with its own verified baseline. Defensive
+	// snapshots on that branch must be no-ops rather than starting another
+	// recovery chain or repeating the operator notice.
 	if err := c.Snapshot(); err != nil {
-		t.Fatalf("repeated depth-cap Snapshot: %v", err)
+		t.Fatalf("snapshot on isolated branch: %v", err)
 	}
 	if got := sink.notices(); len(got) != len(notices) {
 		t.Fatalf("repeated depth-cap snapshot emitted duplicate notice: %v", got)
 	}
 
-	// The force save re-anchored the baseline: the next snapshot must not
-	// conflict again.
+	// New suffixes continue normally on the isolated branch.
 	stale.Add(provider.Message{Role: provider.RoleAssistant, Content: "answer"})
 	if err := c.Snapshot(); err != nil {
 		t.Fatalf("follow-up Snapshot: %v", err)
@@ -2491,67 +2655,6 @@ func TestTwoModelPlannerApprovalUsesHostGate(t *testing.T) {
 	}
 }
 
-func TestTwoModelPlannerUserDecisionUsesAskGate(t *testing.T) {
-	dir := t.TempDir()
-	planner := &recordingProvider{name: "planner", streams: [][]provider.Chunk{
-		textTurn("需要用户选择方案：\n方案一：小改当前逻辑\n方案二：重构控制流\n请选择哪个方案。"),
-	}}
-	execProv := &recordingProvider{name: "executor", streams: [][]provider.Chunk{
-		textTurn("selected execution complete"),
-	}}
-	exec := agent.New(execProv, tool.NewRegistry(), agent.NewSession("exec sys"), agent.Options{}, event.Discard)
-	coord := agent.NewCoordinator(planner, agent.NewSession("planner sys"), nil, tool.NewRegistry(), agent.Options{}, exec, 0, event.Discard, nil)
-
-	asks := make(chan event.Ask, 1)
-	c := New(Options{
-		Runner:       coord,
-		Executor:     exec,
-		SystemPrompt: "exec sys",
-		SessionDir:   dir,
-		SessionPath:  filepath.Join(dir, "session.jsonl"),
-		Label:        "test",
-		Sink: event.FuncSink(func(e event.Event) {
-			if e.Kind == event.AskRequest {
-				asks <- e.Ask
-			}
-		}),
-	})
-	c.EnableInteractiveApproval()
-
-	done := make(chan error, 1)
-	go func() {
-		done <- c.Run(context.Background(), "fix the planner decision bug")
-	}()
-	var ask event.Ask
-	select {
-	case ask = <-asks:
-	case <-time.After(30 * time.Second):
-		t.Fatal("AskRequest was not emitted")
-	}
-	if got := len(execProv.requests); got != 0 {
-		t.Fatalf("executor requests before user decision = %d, want 0", got)
-	}
-	if len(ask.Questions) != 1 || ask.Questions[0].ID != "planner_user_decision" {
-		t.Fatalf("ask questions = %+v, want planner decision question", ask.Questions)
-	}
-	c.AnswerQuestion(ask.ID, []event.AskAnswer{{QuestionID: "planner_user_decision", Selected: []string{"方案二：重构控制流"}}})
-	select {
-	case err := <-done:
-		if err != nil {
-			t.Fatalf("Run: %v", err)
-		}
-	case <-time.After(30 * time.Second):
-		t.Fatal("answered two-model turn did not finish")
-	}
-	if got := len(execProv.requests); got == 0 {
-		t.Fatal("executor did not run after user decision")
-	}
-	reqText := requestMessagesText(execProv.requests[0].Messages)
-	if !strings.Contains(reqText, "Host user answer to planner question") || !strings.Contains(reqText, "方案二") {
-		t.Fatalf("executor request missing host user answer:\n%s", reqText)
-	}
-}
-
 func TestResumeResetsTwoModelPlannerContext(t *testing.T) {
 	dir := t.TempDir()
 	planner := &recordingProvider{name: "planner", streams: [][]provider.Chunk{
@@ -2658,8 +2761,8 @@ func TestTwoModelShortChoiceReplySkipsPlanner(t *testing.T) {
 	if strings.Contains(reqText, "Reasonix executor handoff") {
 		t.Fatalf("short choice reply should not be wrapped as a planner handoff:\n%s", reqText)
 	}
-	if got := lastUserMessage(execProv.requests[0].Messages); got != "1" {
-		t.Fatalf("executor last user = %q, want raw choice reply", got)
+	if got := agent.StripTransientUserBlocks(lastUserMessage(execProv.requests[0].Messages)); got != "1" {
+		t.Fatalf("executor last user = %q, want raw choice reply (execution-policy may append)", lastUserMessage(execProv.requests[0].Messages))
 	}
 }
 

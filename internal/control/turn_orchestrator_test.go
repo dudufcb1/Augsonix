@@ -54,7 +54,7 @@ func TestTurnOrchestratorAttachesTrustedPlannerMetadata(t *testing.T) {
 	sess := agent.NewSession("sys")
 	sess.Add(provider.Message{Role: provider.RoleUser, Content: "explain the bug"})
 	sess.Add(provider.Message{Role: provider.RoleAssistant, Content: "the bug is in parser.go"})
-	exec := agent.New(nil, tool.NewRegistry(), sess, agent.Options{}, event.Discard)
+	exec := agent.New(nil, tool.NewRegistry(), sess, agent.Options{AgentPreset: "delivery"}, event.Discard)
 	runner := &plannerMetadataRunner{}
 	c := New(Options{
 		Runner:         runner,
@@ -333,43 +333,50 @@ type recordingSessionRunner struct {
 }
 
 type deliveryScopeErrorRunner struct {
-	scopes []agent.DeliveryExecutionScope
+	scopes        []agent.DeliveryExecutionScope
+	terminalAfter int
+	// usage stands in for the billable work a real executor would report; the
+	// goal's spend budget is measured in it.
+	usage event.Sink
 }
 
 func (r *deliveryScopeErrorRunner) Run(ctx context.Context, _ string) error {
 	if scope, ok := agent.DeliveryExecutionScopeFromContext(ctx); ok {
 		r.scopes = append(r.scopes, scope)
 	}
+	if r.usage != nil {
+		r.usage.Emit(event.Event{Kind: event.Usage, UsageSource: event.UsageSourceExecutor,
+			Usage: &provider.Usage{PromptTokens: 100, CompletionTokens: 10, TotalTokens: 110, RequestCount: 1}})
+	}
+	if r.terminalAfter > 0 && len(r.scopes) >= r.terminalAfter {
+		return errors.New("external provider stop")
+	}
 	return &agent.FinalReadinessError{Attempts: 1, Reason: "missing verification", Missing: []string{"verification"}}
 }
 
-func TestGoalReadinessFailureContinuesThenPausesOnNoProgress(t *testing.T) {
-	runner := &deliveryScopeErrorRunner{}
+func TestGoalReadinessFailureContinuesUntilExternalStop(t *testing.T) {
+	runner := &deliveryScopeErrorRunner{terminalAfter: 3}
 	executor := agent.New(nil, tool.NewRegistry(), agent.NewSession(""), agent.Options{}, event.Discard)
 	c := New(Options{Runner: runner, Executor: executor})
 	c.SetGoal("ship the integration")
 
 	err := newTurnOrchestrator(c).runGoalLoopWithRawDisplay(context.Background(), "start", "start", "")
-	if err != nil {
-		t.Fatalf("run err = %v, want the loop to absorb FinalReadinessError and pause on no-progress", err)
+	if err == nil || err.Error() != "external provider stop" {
+		t.Fatalf("run err = %v, want external provider stop after continuations", err)
 	}
-	// The FSM absorbs the readiness failure and continues with the missing
-	// requirements; with no host-verifiable progress across turns the
-	// no-progress gate pauses the goal instead of looping forever.
-	if got := c.GoalStatus(); got != GoalStatusBlocked {
-		t.Fatalf("GoalStatus = %q, want blocked (no-progress pause)", got)
+	// The FSM absorbs readiness failures and keeps the Goal running; only the
+	// external provider error ends this execution attempt.
+	if got := c.GoalStatus(); got != GoalStatusRunning {
+		t.Fatalf("GoalStatus = %q, want running", got)
 	}
-	if rt := c.GoalRuntime(); rt.StopCause != stopCauseNoProgress {
-		t.Fatalf("stop cause = %q, want %q", rt.StopCause, stopCauseNoProgress)
+	if rt := c.GoalRuntime(); rt.StopCause != "" || rt.TurnsUsed != 2 {
+		t.Fatalf("runtime = %+v, want two completed continuations and no pause", rt)
 	}
 	if len(runner.scopes) < 2 || runner.scopes[0].ID == "" || runner.scopes[0].TaskText != "ship the integration" {
 		t.Fatalf("delivery scopes = %+v, want scoped continuation turns", runner.scopes)
 	}
-	if !c.ResumeGoal() || c.GoalStatus() != GoalStatusRunning {
-		t.Fatal("paused Goal should resume with its existing scope")
-	}
 	if id, task, ok := c.goals.deliveryScope(); !ok || id != runner.scopes[0].ID || task != "ship the integration" {
-		t.Fatalf("resumed scope = (%q, %q, %v), want preserved id/task", id, task, ok)
+		t.Fatalf("preserved scope = (%q, %q, %v), want original id/task", id, task, ok)
 	}
 }
 
@@ -1011,12 +1018,12 @@ func TestTurnOrchestratorCancelBeforeRunnerAddsUserPreservesVisiblePrompt(t *tes
 	c.canceling = true
 	c.mu.Unlock()
 
-	err := newTurnOrchestrator(c).runTurnWithRawDisplay(context.Background(), "inspect @diagram.png", "inspect @diagram.png", "")
+	err := newTurnOrchestrator(c).runTurnWithImageRefsRawDisplay(context.Background(), "Referenced context:\n\n<image path=\"diagram.png\">\n@diagram.png\n</image>\n\ninspect the diagnostic", "inspect the diagnostic", "@diagram.png", "")
 	if !errors.Is(err, context.Canceled) {
 		t.Fatalf("expected context.Canceled, got %v", err)
 	}
 	msgs := sess.Snapshot()
-	if len(msgs) != 3 || msgs[1].Role != provider.RoleUser || msgs[1].Content != "inspect @diagram.png" || !msgs[2].LocalOnly {
+	if len(msgs) != 3 || msgs[1].Role != provider.RoleUser || !strings.Contains(msgs[1].Content, "inspect the diagnostic") || !msgs[2].LocalOnly {
 		t.Fatalf("session after pre-executor cancel = %+v, want user plus recovery marker", msgs)
 	}
 	if len(msgs[1].Images) != 1 || !strings.HasPrefix(msgs[1].Images[0], "data:image/png;base64,") {

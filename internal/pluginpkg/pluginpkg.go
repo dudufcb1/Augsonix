@@ -29,6 +29,8 @@ const (
 	ClaudeManifest = ".claude-plugin/plugin.json"
 	StateFilename  = "plugin-packages.json"
 
+	PluginStatusDisabledIncompatible = "disabled_incompatible"
+
 	claudeSettingsPath = ".claude/settings.json"
 	claudeInstructions = "CLAUDE.md"
 )
@@ -255,6 +257,8 @@ type InstalledPlugin struct {
 	ManifestKind string `json:"manifestKind,omitempty"`
 	Enabled      bool   `json:"enabled"`
 	Commit       string `json:"commit,omitempty"`
+	Status       string `json:"status,omitempty"`
+	StatusReason string `json:"statusReason,omitempty"`
 }
 
 type InstalledPackage struct {
@@ -367,29 +371,6 @@ func SetEnabled(reasonixHome, name string, enabled bool) error {
 		}
 	}
 	return fmt.Errorf("plugin %q is not installed", name)
-}
-
-func LoadInstalled(reasonixHome string) ([]InstalledPackage, []string) {
-	st, err := LoadState(reasonixHome)
-	if err != nil {
-		return nil, []string{err.Error()}
-	}
-	var out []InstalledPackage
-	var warnings []string
-	for _, installed := range st.Plugins {
-		if !installed.Enabled {
-			continue
-		}
-		root := ResolveRoot(reasonixHome, installed.Root)
-		pkg, pkgWarnings, err := ParseDir(root)
-		if err != nil {
-			warnings = append(warnings, fmt.Sprintf("%s: %v", installed.Name, err))
-			continue
-		}
-		out = append(out, InstalledPackage{Installed: installed, Package: pkg, Warnings: pkgWarnings})
-	}
-	sort.SliceStable(out, func(i, j int) bool { return out[i].Installed.Name < out[j].Installed.Name })
-	return out, warnings
 }
 
 func ResolveRoot(reasonixHome, root string) string {
@@ -533,7 +514,16 @@ func parseCodexLike(path, root, kind string, includeCodexSessionStartHook bool) 
 	if kind == "claude" {
 		warnings = append(warnings, applyClaudeConventionDirs(root, &manifest)...)
 	}
-	compatWarnings, compatIssues := applyClaudeCompatibility(root, &manifest)
+	var compatWarnings []string
+	var compatIssues []CompatibilityIssue
+	if kind == "claude" {
+		// Claude Code does not treat a plugin-root CLAUDE.md as project
+		// context. Keep its supported hook and MCP conventions without
+		// synthesizing an extra SessionStart context hook.
+		compatWarnings, compatIssues = appendClaudeCompatibility(root, &manifest)
+	} else {
+		compatWarnings, compatIssues = applyClaudeCompatibility(root, &manifest)
+	}
 	warnings = append(warnings, compatWarnings...)
 	issues = append(issues, compatIssues...)
 	if err := validateManifest(root, &manifest); err != nil {
@@ -644,27 +634,6 @@ func ManifestPath(kind string) string {
 
 func ManifestPaths() []string {
 	return []string{NativeManifest, CodexManifest, ClaudeManifest}
-}
-
-func applyClaudeCompatibility(root string, manifest *Manifest) ([]string, []CompatibilityIssue) {
-	appendRootClaudeInstructions(root, manifest)
-	return appendClaudeCompatibility(root, manifest)
-}
-
-func appendRootClaudeInstructions(root string, manifest *Manifest) {
-	path := filepath.Join(root, claudeInstructions)
-	info, err := os.Stat(path)
-	if err != nil || !info.Mode().IsRegular() {
-		return
-	}
-	if manifest.Hooks == nil {
-		manifest.Hooks = map[string][]Hook{}
-	}
-	manifest.Hooks["SessionStart"] = append(manifest.Hooks["SessionStart"], Hook{
-		ContextFile: claudeInstructions,
-		Cwd:         ".",
-		Description: "Plugin CLAUDE.md startup context from " + manifest.Name,
-	})
 }
 
 func claudeTimeoutMillis(seconds int) int {

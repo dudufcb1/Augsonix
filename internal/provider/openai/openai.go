@@ -84,20 +84,23 @@ func New(cfg provider.Config) (provider.Provider, error) {
 	// A meaningful explicit list is the endpoint's declared effort vocabulary;
 	// auto remains implicit and is therefore ignored here.
 	supportedEfforts, hasExplicitEfforts := reasoningEffortVocabulary(kimiK3, supportedEfforts)
-	chatURL, _ := cfg.Extra["chat_url"].(string)
-	chatURL = normalizeChatURL(cfg.BaseURL, chatURL)
+	legacyChatURL, _ := cfg.Extra["chat_url"].(string)
+	chatURL, _ := cfg.Extra["request_url"].(string)
+	chatURL = strings.TrimSpace(chatURL)
+	if chatURL == "" {
+		chatURL = normalizeChatURL(cfg.BaseURL, legacyChatURL)
+	}
 	prefixChatURL := deepSeekPrefixChatURL(chatURL)
 	headers, _ := cfg.Extra["headers"].(map[string]string)
 	extraBody, _ := cfg.Extra["extra_body"].(map[string]any)
 	vision, _ := cfg.Extra["vision"].(bool)
-	explicitModelVision, _ := cfg.Extra["vision_model_explicit"].(bool)
 	officialDeepSeek := IsDeepSeek(cfg.BaseURL)
 	// DeepSeek's official chat API accepts string message content only. Keep
 	// this provider-boundary guard even though config capability resolution
-	// normally prevents image attachments from reaching this layer. A positive
-	// model-scoped capability can opt in without letting stale provider-wide
-	// vision=true settings affect current text-only models.
-	vision = vision && (!officialDeepSeek || explicitModelVision)
+	// normally prevents image attachments from reaching this layer. No persisted
+	// or extension-supplied capability flag may override the endpoint's current
+	// wire contract; future native vision support needs an explicit serializer.
+	vision = vision && !officialDeepSeek
 	visionDetail, _ := cfg.Extra["vision_detail"].(string)
 	visionDetail = strings.ToLower(strings.TrimSpace(visionDetail))
 	if visionDetail != "low" && visionDetail != "high" {
@@ -220,11 +223,14 @@ func New(cfg provider.Config) (provider.Provider, error) {
 		thinkingType: thinkingType, effort: effort, deepseek: deepseek, flash: deepseekV4Flash,
 		minimax: minimax, zhipu: zhipu, longcat: longcat, ollamaCloud: ollamaCloud,
 		explicit: hasExplicitEfforts, supported: supportedEfforts})
-	// The automatic cap protects DeepSeek reasoning, not ordinary long-form
-	// output. Preserve an explicit user budget in either mode, but leave a
-	// thinking-disabled request uncapped unless the user configured one.
-	if maxOutputTokens == 0 && officialDeepSeek && thinkingType != "disabled" {
-		maxOutputTokens = provider.DefaultHighOutputTokens // DeepSeek supports up to 384K; 128K is a safe default for reasoning
+	// max_output_tokens=0 means automatic (not unlimited). DeepSeek reasoning
+	// uses 32K / high-max 64K; thinking-disabled stays ordinary 16K. 128K is
+	// never automatic — users must set it explicitly after length truncations.
+	// This budget never participates in compact_ratio.
+	autoMaxOutput := maxOutputTokens == 0 && officialDeepSeek
+	if autoMaxOutput {
+		reasoningOn := thinkingType != "disabled" && effort != "disabled" && effort != "off" && effort != "none"
+		maxOutputTokens = provider.AutoOutputBudget(reasoningOn, effort)
 	}
 	httpClient, err := newHTTPClient(cfg)
 	if err != nil {
@@ -251,6 +257,7 @@ func New(cfg provider.Config) (provider.Provider, error) {
 		vision:          vision,
 		visionDetail:    visionDetail,
 		maxOutputTokens: maxOutputTokens,
+		autoMaxOutput:   autoMaxOutput,
 		effort:          effort,
 		requestEfforts:  requestEfforts,
 		http:            httpClient,
@@ -289,7 +296,8 @@ type client struct {
 	thinkingType    string        // explicit `thinking` config override (enabled|disabled); "" = no override
 	vision          bool          // model accepts image input — embed attached images as image_url parts
 	visionDetail    string        // image_url detail hint (low|high); "" = auto/omit
-	maxOutputTokens int           // configured/default total output budget; <=0 omits the optional field
+	maxOutputTokens int           // resolved total output budget; <=0 omits the optional field
+	autoMaxOutput   bool          // true when max_output_tokens=0 (automatic ladder)
 	effort          string        // reasoning_effort for OpenAI; thinking.type for MiniMax; "" = auto/provider default
 	requestEfforts  []string      // depth levels a per-request EffortOverride may take; empty = overrides ignored
 	idleTimeout     time.Duration // SSE stall watchdog window; defaultStreamIdleTimeout unless a test overrides
@@ -367,8 +375,8 @@ func normalizeReasoningProtocol(raw string) string {
 }
 
 func normalizeChatURL(baseURL, chatURL string) string {
-	if trimmed := strings.TrimRight(strings.TrimSpace(chatURL), "/"); trimmed != "" {
-		return trimmed
+	if legacy := strings.TrimRight(strings.TrimSpace(chatURL), "/"); legacy != "" {
+		return legacy
 	}
 	return strings.TrimRight(strings.TrimSpace(baseURL), "/") + "/chat/completions"
 }
@@ -776,7 +784,15 @@ func (c *client) buildRequest(req provider.Request) chatRequest {
 
 	maxOutputTokens := req.MaxTokens
 	if maxOutputTokens == 0 {
-		maxOutputTokens = c.maxOutputTokens
+		if c.autoMaxOutput && c.deepseek {
+			// Re-resolve so per-request EffortOverride (high/max) can raise 32K→64K.
+			effort := c.requestEffort(req)
+			reasoningOn := c.thinkingType != "disabled" &&
+				effort != "disabled" && effort != "off" && effort != "none"
+			maxOutputTokens = provider.AutoOutputBudget(reasoningOn, effort)
+		} else {
+			maxOutputTokens = c.maxOutputTokens
+		}
 	}
 	if maxOutputTokens < 0 {
 		maxOutputTokens = 0

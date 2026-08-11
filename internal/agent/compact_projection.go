@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"strings"
-	"time"
 
 	"reasonix/internal/event"
 	"reasonix/internal/provider"
@@ -65,13 +64,16 @@ type explicitCompressionSnapshot struct {
 	transcriptVersion uint64
 	coveredHash       string
 	projectionVersion uint64
+	generation        uint64
 	promptCacheKey    string
 }
 
 func (a *Agent) snapshotExplicitCompression() explicitCompressionSnapshot {
 	canonical, version := a.session.snapshotMessagesVersion()
 	cacheKey := a.currentPromptCacheKey()
+	a.compactionMu.Lock()
 	state := a.compactionState
+	a.compactionMu.Unlock()
 	visible := canonical
 	if projectionValid(state, canonical, version, cacheKey) {
 		if projected := modelVisibleFromProjection(state.Projection, canonical); len(projected) > 0 {
@@ -84,6 +86,7 @@ func (a *Agent) snapshotExplicitCompression() explicitCompressionSnapshot {
 		transcriptVersion: version,
 		coveredHash:       coveredPrefixHash(canonical, len(canonical)),
 		projectionVersion: state.Projection.ProjectionVersion,
+		generation:        state.Generation,
 		promptCacheKey:    cacheKey,
 	}
 }
@@ -150,7 +153,6 @@ type visibleCompressionPlan struct {
 type preparedVisibleCompression struct {
 	fold         []provider.Message
 	instructions string
-	archive      string
 }
 
 func (a *Agent) compressVisibleRange(
@@ -162,6 +164,11 @@ func (a *Agent) compressVisibleRange(
 	preview string,
 	instructions string,
 ) (tool.CompressResult, error) {
+	a.compactionRunMu.Lock()
+	defer a.compactionRunMu.Unlock()
+	if !a.explicitCompressionSnapshotCurrent(snap) {
+		return tool.CompressResult{}, errCompressStaleContext
+	}
 	plan, ok := a.planVisibleCompression(snap, direction, anchorIndex, preview)
 	if !ok {
 		return plan.result, nil
@@ -180,8 +187,9 @@ func (a *Agent) compressVisibleRange(
 		return result, nil
 	}
 
-	summary, mode, usage, providerReqID, err := a.runCompactionSummary(ctx, prepared.fold, prepared.instructions)
-	tele := compactionTelemetryFromSummary(trigger, a.CacheState(), result.SourceTokens, mode, usage, providerReqID)
+	res, err := a.foldToSummary(ctx, prepared.fold, prepared.instructions)
+	summary := res.Text
+	tele := compactionTelemetryFromSummary(trigger, a.CacheState(), result.SourceTokens, res)
 	if err != nil {
 		tele.Error = err.Error()
 		a.emitCompactionTelemetry(tele)
@@ -201,7 +209,7 @@ func (a *Agent) compressVisibleRange(
 	tele.ProjectionTokens = projectionTokens
 	result.Messages = len(plan.fold)
 	result.ProjectionTokens = projectionTokens
-	result.Mode = mode
+	result.Mode = res.Mode
 	if projectionTokens >= result.SourceTokens {
 		result.Reason = "compressed context would not be smaller"
 		a.emitCompactionTelemetry(tele)
@@ -209,7 +217,15 @@ func (a *Agent) compressVisibleRange(
 		return result, nil
 	}
 
-	if err := a.installVisibleCompression(snap, trigger, mode, summary, projection, result.SourceTokens, projectionTokens, usage); err != nil {
+	inputHash := providerVisibleFingerprint(provider.ModelMessages(snap.visible))
+	outputHash := providerVisibleFingerprint(projection)
+	state, err := a.commitSummaryProjection(summaryProjectionCommit{
+		canonical: snap.canonical, fold: prepared.fold, projected: projection, result: res,
+		transcriptVersion: snap.transcriptVersion, projectionVersion: snap.projectionVersion, generation: snap.generation,
+		activeTurn: a.activeTurnCreatedAt.Load(), trigger: trigger, summary: summary,
+		inputHash: inputHash, outputHash: outputHash, sourceTokens: result.SourceTokens, projectionTokens: projectionTokens,
+	})
+	if err != nil {
 		if errors.Is(err, errCompressStaleContext) {
 			tele.Error = err.Error()
 			a.emitCompactionTelemetry(tele)
@@ -217,14 +233,25 @@ func (a *Agent) compressVisibleRange(
 		a.emitCompactionAborted(trigger)
 		return tool.CompressResult{}, err
 	}
-	a.session.NoteContentRewrite("compact_" + trigger)
 	a.emitCompactionTelemetry(tele)
 	a.sink.Emit(event.Event{Kind: event.CompactionDone, Compaction: event.Compaction{
-		Trigger: trigger, Messages: len(plan.fold), Summary: summary, Archive: prepared.archive,
+		Trigger: trigger, Messages: len(plan.fold), Summary: summary, Archive: state.LastReceipt.Archive,
 	}})
 	result.Status = "ok"
 	result.Reason = ""
 	return result, nil
+}
+
+func (a *Agent) explicitCompressionSnapshotCurrent(snap explicitCompressionSnapshot) bool {
+	current, version := a.session.snapshotMessagesVersion()
+	a.compactionMu.Lock()
+	projectionVersion := a.compactionState.Projection.ProjectionVersion
+	generation := a.compactionState.Generation
+	a.compactionMu.Unlock()
+	return version == snap.transcriptVersion && len(current) == len(snap.canonical) &&
+		coveredPrefixHash(current, len(current)) == snap.coveredHash &&
+		projectionVersion == snap.projectionVersion && generation == snap.generation &&
+		a.currentPromptCacheKey() == snap.promptCacheKey
 }
 
 func (a *Agent) planVisibleCompression(snap explicitCompressionSnapshot, direction string, anchorIndex int, preview string) (visibleCompressionPlan, bool) {
@@ -301,15 +328,7 @@ func (a *Agent) prepareVisibleCompression(ctx context.Context, trigger string, f
 	if len(preparedFold) == 0 {
 		return preparedVisibleCompression{}, "compaction hook removed the selected range", nil
 	}
-	prepared := preparedVisibleCompression{fold: preparedFold, instructions: preparedInstructions}
-	if a.archiveDir == "" {
-		return prepared, "", nil
-	}
-	prepared.archive, err = archiveMessages(a.archiveDir, preparedFold)
-	if err != nil {
-		return preparedVisibleCompression{}, "", fmt.Errorf("archive: %w", err)
-	}
-	return prepared, "", nil
+	return preparedVisibleCompression{fold: preparedFold, instructions: preparedInstructions}, "", nil
 }
 
 func buildVisibleCompressionProjection(visible []provider.Message, plan visibleCompressionPlan, summary string) []provider.Message {
@@ -325,51 +344,15 @@ func buildVisibleCompressionProjection(visible []provider.Message, plan visibleC
 	return provider.ModelMessages(projection)
 }
 
-func (a *Agent) installVisibleCompression(snap explicitCompressionSnapshot, trigger, mode, summary string, projection []provider.Message, sourceTokens, projectionTokens int, usage *provider.Usage) error {
-	current, currentVersion := a.session.snapshotMessagesVersion()
-	if currentVersion != snap.transcriptVersion || len(current) != len(snap.canonical) ||
-		coveredPrefixHash(current, len(current)) != snap.coveredHash ||
-		a.compactionState.Projection.ProjectionVersion != snap.projectionVersion {
-		return errCompressStaleContext
-	}
-	now := time.Now().UTC()
-	state := CompactionState{
-		SchemaVersion:     compactionStateSchemaCurrent,
-		TranscriptVersion: snap.transcriptVersion,
-		Projection: ContextProjection{
-			Messages:          projection,
-			TranscriptVersion: snap.transcriptVersion,
-			ProjectionVersion: snap.projectionVersion + 1,
-			CoveredCount:      len(snap.canonical),
-			CoveredPrefixHash: snap.coveredHash,
-			SummaryHash:       summaryContentHash(summary),
-			SourceTokens:      sourceTokens,
-			ProjectionTokens:  projectionTokens,
-			CreatedAt:         now,
-		},
-		PromptCacheKey:   snap.promptCacheKey,
-		LastCacheState:   a.CacheState(),
-		LastTrigger:      trigger,
-		LastMode:         mode,
-		LastSourceTokens: sourceTokens,
-		LastResultTokens: projectionTokens,
-		UpdatedAt:        now,
-	}
-	if a.pricing != nil && usage != nil {
-		state.LastCompactionCost = a.pricing.Cost(usage)
-	}
-	if err := a.installProjection(state); err != nil {
-		return fmt.Errorf("persist projection: %w", err)
-	}
-	return nil
-}
-
-func compactionTelemetryFromSummary(trigger, cacheState string, sourceTokens int, mode string, usage *provider.Usage, providerReqID string) CompactionTelemetry {
+func compactionTelemetryFromSummary(trigger, cacheState string, sourceTokens int, res foldSummary) CompactionTelemetry {
 	tele := CompactionTelemetry{
-		Trigger: trigger, CacheState: cacheState, Mode: mode,
-		Native: mode == CompactionModeNative, SourceTokens: sourceTokens,
-		ProviderRequestID: providerReqID,
+		Trigger: trigger, CacheState: cacheState, Mode: res.Mode,
+		SourceTokens:      sourceTokens,
+		ProviderRequestID: res.RequestID,
+		FoldTokens:        res.FoldTokens,
+		Spans:             1, // one application-layer summary request per transaction
 	}
+	usage := res.Usage
 	if usage == nil {
 		return tele
 	}
@@ -387,41 +370,47 @@ func compactionTelemetryFromSummary(trigger, cacheState string, sourceTokens int
 
 // compact writes a context projection; trigger stays "auto"/"manual" for UI cards.
 func (a *Agent) compact(ctx context.Context, trigger, instructions string, force bool) error {
-	_, err := a.compactToProjection(ctx, trigger, instructions, force)
+	_, err := a.compactToProjection(ctx, trigger, instructions, force, false)
 	return err
 }
 
-// compactToProjection summarizes the older middle of the session into a model-
-// visible projection. The canonical transcript is never rewritten. force
-// bypasses the fold-economics skip. CompactionNoop means no projection was
-// installed (nothing to fold); callers at the force threshold must treat that
-// as a hard failure rather than sending the oversized canonical prompt.
-func (a *Agent) compactToProjection(ctx context.Context, trigger, instructions string, force bool) (CompactionOutcome, error) {
-	msgs, transcriptVersion := a.session.snapshotMessagesVersion()
-	head, start, ok := a.planCompaction(msgs, minCompactMessages)
+// compactToProjection installs one content-driven summary checkpoint:
+// stable prefix + one structured digest + recent verbatim tail.
+// The canonical transcript is never rewritten. CompactionNoop means nothing
+// was foldable; callers at physical overflow must treat that as hard failure.
+// mustFree marks the fold the caller cannot proceed without.
+func (a *Agent) compactToProjection(ctx context.Context, trigger, instructions string, force, mustFree bool) (CompactionOutcome, error) {
+	a.compactionRunMu.Lock()
+	defer a.compactionRunMu.Unlock()
+	activeTurn := a.activeTurnCreatedAt.Load()
+	if activeTurn != 0 && a.lastCompactionTurn.Load() == activeTurn && trigger != CompactionTriggerManual {
+		return CompactionNoop, nil
+	}
+	canonical, transcriptVersion := a.session.snapshotMessagesVersion()
+	a.compactionMu.Lock()
+	stateSnapshot := a.compactionState
+	startProjectionVersion := a.compactionState.Projection.ProjectionVersion
+	startGeneration := a.compactionState.Generation
+	a.compactionMu.Unlock()
+	msgs := a.visibleInputForFold(stateSnapshot, canonical, transcriptVersion)
+	viewInputHash := providerVisibleFingerprint(provider.ModelMessages(msgs))
+	if trigger != CompactionTriggerManual && stateSnapshot.LastReceipt != nil && stateSnapshot.LastReceipt.Status == "applied" && stateSnapshot.LastReceipt.Action == "summary" && stateSnapshot.LastReceipt.InputHash == viewInputHash {
+		return CompactionNoop, nil
+	}
+	head, start, ok := a.planFoldRegion(msgs, force)
 	if !ok {
-		head, start, ok = a.planCompaction(msgs, 1)
-	}
-	if !ok {
 		return CompactionNoop, nil
 	}
-	if active := a.activeTurnStart(msgs); active >= head && active < start {
-		start = active
-		if start <= head {
-			return CompactionNoop, nil
-		}
-	}
-	region := msgs[head:start]
-	kept, fold := a.partitionFoldForProjection(region)
-	if len(fold) == 0 {
+	kept, fold, retention := a.partitionFoldForProjection(msgs[head:start])
+	if len(fold) == 0 || (!force && !foldEconomics(fold)) {
 		return CompactionNoop, nil
 	}
-	if !force && !foldEconomics(fold) {
-		return CompactionNoop, nil
+	fixedPrefixTokens := estimateMessagesTokens(a.providerProjectionMessages(msgs[:head]))
+	if a.contextWindow > 0 && fixedPrefixTokens >= a.compactTrigger() {
+		return CompactionNoop, fmt.Errorf("%w: fixed prefix (%d tokens) already exceeds trigger (%d)", errCheckpointRejected, fixedPrefixTokens, a.compactTrigger())
 	}
 
 	a.sink.Emit(event.Event{Kind: event.CompactionStarted, Compaction: event.Compaction{Trigger: trigger}})
-
 	if a.hooks != nil {
 		if hookInstr := a.hooks.PreCompact(ctx, trigger); hookInstr != "" {
 			if instructions != "" {
@@ -430,7 +419,6 @@ func (a *Agent) compactToProjection(ctx context.Context, trigger, instructions s
 			instructions += hookInstr
 		}
 	}
-
 	var err error
 	fold, instructions, err = a.interceptCompactionPrepare(ctx, fold, instructions)
 	if err != nil {
@@ -442,19 +430,14 @@ func (a *Agent) compactToProjection(ctx context.Context, trigger, instructions s
 		return CompactionNoop, nil
 	}
 
-	archived := ""
-	if a.archiveDir != "" {
-		path, aerr := archiveMessages(a.archiveDir, fold)
-		if aerr != nil {
-			a.emitCompactionAborted(trigger)
-			return CompactionNoop, fmt.Errorf("archive: %w", aerr)
-		}
-		archived = path
+	sourceTokens := a.estimatedPromptTokens(msgs)
+	res, tele, err := a.foldOrDegrade(ctx, trigger, mustFree, fold, instructions, sourceTokens)
+	if err != nil {
+		a.emitCompactionTelemetry(tele)
+		a.emitCompactionAborted(trigger)
+		return CompactionNoop, err
 	}
-
-	sourceTokens := estimateMessagesTokens(provider.ModelMessages(msgs))
-	summary, mode, usage, providerReqID, err := a.runCompactionSummary(ctx, fold, instructions)
-	tele := compactionTelemetryFromSummary(trigger, a.CacheState(), sourceTokens, mode, usage, providerReqID)
+	summary, err := a.interceptCompactionComplete(ctx, res.Text)
 	if err != nil {
 		tele.Error = err.Error()
 		a.emitCompactionTelemetry(tele)
@@ -462,217 +445,137 @@ func (a *Agent) compactToProjection(ctx context.Context, trigger, instructions s
 		return CompactionNoop, err
 	}
 
-	summary, err = a.interceptCompactionComplete(ctx, summary)
-	if err != nil {
-		tele.Error = err.Error()
-		a.emitCompactionTelemetry(tele)
-		a.emitCompactionAborted(trigger)
-		return CompactionNoop, err
-	}
-
-	early := a.fixedEarlyUserTurns(msgs, head)
-	projMsgs := make([]provider.Message, 0, head+len(early)+1+len(kept)+len(msgs)-start)
-	projMsgs = append(projMsgs, msgs[:head]...)
-	projMsgs = append(projMsgs, early...)
-	projMsgs = append(projMsgs, formatSummaryMessage(summary))
-	projMsgs = append(projMsgs, kept...)
-	projMsgs = append(projMsgs, msgs[start:]...)
-	projMsgs = provider.ModelMessages(projMsgs)
-
-	projTokens := estimateMessagesTokens(a.providerProjectionMessages(projMsgs))
+	projMsgs := checkpointProjectionMessages(msgs, head, start, kept, summary)
+	projTokens := a.estimatedPromptTokens(projMsgs)
+	fixedPrefixTokens = a.estimatedPromptTokens(msgs[:head])
 	tele.ProjectionTokens = projTokens
+	tele.UserTurnsKept, tele.UserTurnsDropped = retention.Kept, retention.Dropped
 	a.emitCompactionTelemetry(tele)
-
-	projVersion := a.compactionState.Projection.ProjectionVersion + 1
-	st := CompactionState{
-		SchemaVersion:     compactionStateSchemaCurrent,
-		TranscriptVersion: transcriptVersion,
-		Projection: ContextProjection{
-			Messages:          projMsgs,
-			TranscriptVersion: transcriptVersion,
-			ProjectionVersion: projVersion,
-			CoveredCount:      len(msgs),
-			CoveredPrefixHash: coveredPrefixHash(msgs, len(msgs)),
-			SummaryHash:       summaryContentHash(summary),
-			SourceTokens:      sourceTokens,
-			ProjectionTokens:  projTokens,
-			CreatedAt:         time.Now().UTC(),
-		},
-		PromptCacheKey:   a.currentPromptCacheKey(),
-		LastCacheState:   a.CacheState(),
-		LastTrigger:      trigger,
-		LastMode:         mode,
-		LastSourceTokens: sourceTokens,
-		LastResultTokens: projTokens,
-		UpdatedAt:        time.Now().UTC(),
-	}
-	if a.pricing != nil && usage != nil {
-		st.LastCompactionCost = a.pricing.Cost(usage)
-	}
-	if err := a.installProjection(st); err != nil {
+	if err := a.acceptCheckpointCandidate(trigger, force, sourceTokens, projTokens, fixedPrefixTokens); err != nil {
 		a.emitCompactionAborted(trigger)
-		return CompactionNoop, fmt.Errorf("persist projection: %w", err)
+		return CompactionNoop, err
 	}
-	a.session.NoteContentRewrite("compact_" + trigger)
-
+	viewOutputHash := providerVisibleFingerprint(provider.ModelMessages(projMsgs))
+	_, err = a.commitSummaryProjection(summaryProjectionCommit{
+		canonical: canonical, fold: fold, projected: projMsgs, result: res,
+		transcriptVersion: transcriptVersion, projectionVersion: startProjectionVersion,
+		generation: startGeneration, activeTurn: activeTurn, trigger: trigger,
+		summary: summary, inputHash: viewInputHash, outputHash: viewOutputHash,
+		sourceTokens: sourceTokens, projectionTokens: projTokens,
+	})
+	if err != nil {
+		a.emitCompactionAborted(trigger)
+		return CompactionNoop, err
+	}
 	a.sink.Emit(event.Event{Kind: event.CompactionDone, Compaction: event.Compaction{
-		Trigger: trigger, Messages: len(fold), Summary: summary, Archive: archived,
+		Trigger: trigger, Messages: len(fold), Summary: summary,
 	}})
+	// Only once the checkpoint is committed: a rejected candidate folded nothing.
+	a.noticeDroppedUserTurns(retention)
 	return CompactionInstalled, nil
 }
 
-// partitionFoldForProjection is like partitionFold but prior digests join the
-// fold so A1 rolling merge produces a single latest summary. Fixed early user
-// turns are excluded from both kept and fold — the caller re-inserts them from
-// the full transcript so their bytes stay position-stable.
-func (a *Agent) partitionFoldForProjection(region []provider.Message) (kept, fold []provider.Message) {
-	policyKeep := keepIndexes(region, a.keepPolicy)
-	earlySeen := 0
-	const maxEarly = 3
-	for i, m := range region {
-		if m.LocalOnly {
-			continue
+// visibleInputForFold prefers the prior projection + new history over full canonical.
+func (a *Agent) visibleInputForFold(state CompactionState, canonical []provider.Message, transcriptVersion uint64) []provider.Message {
+	if projectionValid(state, canonical, transcriptVersion, a.currentPromptCacheKey()) {
+		if projected := modelVisibleFromProjection(state.Projection, canonical); len(projected) > 0 {
+			return projected
 		}
-		// Skip the fixed early small user turns — they are re-added from the
-		// full transcript after the summary so the prefix stays byte-stable.
-		if m.Role == provider.RoleUser && !isCompactionSummary(m) && a.fixedPinnableUserTurn(m) && earlySeen < maxEarly {
-			earlySeen++
-			continue
-		}
-		if isCompactionSummary(m) {
-			fold = append(fold, m)
-			continue
-		}
-		if policyKeep[i] {
-			kept = append(kept, m)
-			continue
-		}
-		if m.Role == provider.RoleUser && a.fixedPinnableUserTurn(m) {
-			// Additional small user turns beyond the fixed early window fold so
-			// the projection does not grow unbounded with every user fact.
-			fold = append(fold, m)
-			continue
-		}
-		fold = append(fold, m)
 	}
-	return kept, fold
+	return canonical
 }
 
-// runCompactionSummary tries native compaction first, then summarizeWithRetry.
-// On total failure it returns the error without a mechanical marker.
-func (a *Agent) runCompactionSummary(ctx context.Context, fold []provider.Message, instructions string) (summary, mode string, usage *provider.Usage, providerReqID string, err error) {
-	if nc, ok := provider.AsNativeCompactor(a.prov); ok {
-		maxOut := 0
-		if cc, ok := provider.AsCompactionCapabler(a.prov); ok {
-			caps := cc.CompactionCapabilities()
-			maxOut = caps.CompactionOutputTokens
-			if maxOut <= 0 {
-				maxOut = caps.MaxOutputTokens
-			}
+func checkpointProjectionMessages(msgs []provider.Message, head, start int, kept []provider.Message, summary string) []provider.Message {
+	projMsgs := make([]provider.Message, 0, head+1+len(kept)+len(msgs)-start)
+	projMsgs = append(projMsgs, msgs[:head]...)
+	projMsgs = append(projMsgs, formatSummaryMessage(summary))
+	projMsgs = append(projMsgs, kept...)
+	projMsgs = append(projMsgs, msgs[start:]...)
+	return provider.ModelMessages(projMsgs)
+}
+
+// acceptCheckpointCandidate: ≤50% + smaller for auto; force may exceed 50%
+// only if still below trigger; manual below trigger accepts any savings.
+func (a *Agent) acceptCheckpointCandidate(trigger string, force bool, sourceTokens, candidateTokens, fixedPrefixTokens int) error {
+	if candidateTokens >= sourceTokens {
+		return fmt.Errorf("%w: candidate would not reduce tokens (%d >= %d)", errCheckpointRejected, candidateTokens, sourceTokens)
+	}
+	triggerTokens := a.compactTrigger()
+	ceiling := a.checkpointCeiling()
+	hard := a.hardInputCeiling()
+	manualBelowTrigger := trigger == CompactionTriggerManual && sourceTokens < triggerTokens
+	if manualBelowTrigger {
+		// Directed manual compress: any real savings is acceptable.
+		return nil
+	}
+	if fixedPrefixTokens > ceiling {
+		// Exceptional path: fixed prefix alone already exceeds 50%.
+		savings := sourceTokens - candidateTokens
+		if savings < a.exceptionalMinimumSavings() {
+			return fmt.Errorf("%w: fixed-prefix exception requires ≥%d token savings, got %d", errCheckpointRejected, a.exceptionalMinimumSavings(), savings)
 		}
-		res, nerr := nc.Compact(ctx, provider.CompactionRequest{
-			Messages:        fold,
-			Instructions:    instructions,
-			MaxOutputTokens: maxOut,
-			PromptCacheKey:  promptCacheKey(a.workspaceID, BranchID(a.sessionPath), a.modelRef),
-			SessionID:       BranchID(a.sessionPath),
-		})
-		if nerr == nil && res.Valid() {
-			if res.Summary != "" {
-				return res.Summary, CompactionModeNative, res.Usage, res.ProviderRequestID, nil
-			}
-			// Provider returned a full projection; extract summary text if present,
-			// otherwise render the projection as the digest body.
-			if s := extractLatestSummary(res.Projection); s != "" {
-				return s, CompactionModeNative, res.Usage, res.ProviderRequestID, nil
-			}
-			return renderTranscript(res.Projection), CompactionModeNative, res.Usage, res.ProviderRequestID, nil
+		if triggerTokens > 0 && candidateTokens >= triggerTokens {
+			return fmt.Errorf("%w: candidate %d still at or above trigger %d", errCheckpointRejected, candidateTokens, triggerTokens)
 		}
-		if nerr != nil && !errors.Is(nerr, provider.ErrCompactionUnsupported) {
-			// Hard native failure: still try ordinary summarize fallback.
-			a.sink.Emit(event.Event{Kind: event.Notice, Level: event.LevelInfo, Text: "Native compaction unavailable; using summary fallback.", Detail: nerr.Error()})
+		if hard > 0 && candidateTokens >= hard {
+			return fmt.Errorf("%w: candidate %d still at or above physical ceiling %d", errCheckpointRejected, candidateTokens, hard)
+		}
+		return nil
+	}
+	if ceiling > 0 && candidateTokens > ceiling {
+		// keep / recent_keep / active-turn protection made the candidate large;
+		// this is not a fixed-prefix exception. Force/overflow may still land
+		// a strictly smaller view below the trigger when the ceiling cannot.
+		if !force {
+			return fmt.Errorf("%w: candidate %d exceeds checkpoint ceiling %d (protected content too large)", errCheckpointRejected, candidateTokens, ceiling)
 		}
 	}
-	summary, usage, err = a.summarizeWithRetry(ctx, fold, instructions)
+	if triggerTokens > 0 && candidateTokens >= triggerTokens && !force {
+		return fmt.Errorf("%w: candidate %d still at or above trigger %d", errCheckpointRejected, candidateTokens, triggerTokens)
+	}
+	if force && triggerTokens > 0 && candidateTokens >= triggerTokens {
+		return fmt.Errorf("%w: forced candidate %d still at or above trigger %d", errCheckpointRejected, candidateTokens, triggerTokens)
+	}
+	return nil
+}
+
+// planFoldRegion returns [head:start] to fold; force shrinks the recent tail.
+func (a *Agent) planFoldRegion(msgs []provider.Message, force bool) (head, start int, ok bool) {
+	head, start, ok = a.planCompaction(msgs, minCompactMessages, force)
+	if !ok {
+		head, start, ok = a.planCompaction(msgs, 1, force)
+	}
+	if !ok {
+		return head, start, false
+	}
+	if active := a.activeTurnStart(msgs); active >= head && active < start {
+		start = active
+	}
+	return head, start, start > head
+}
+
+func (a *Agent) partitionFoldForProjection(region []provider.Message) (kept, fold []provider.Message, retention userTurnRetention) {
+	policyKeep, retention := a.keepIndexes(region)
+	for i, m := range region {
+		switch {
+		case m.LocalOnly: // display-only output never reaches a provider
+		case isCompactionSummary(m):
+			// Always merge prior digests into the single next summary.
+			fold = append(fold, m)
+		case policyKeep[i]:
+			kept = append(kept, a.keptForProjection(m))
+		default:
+			fold = append(fold, m)
+		}
+	}
+	return kept, fold, retention
+}
+
+// runCompactionSummary uses the single local summarizer path for every provider.
+func (a *Agent) runCompactionSummary(ctx context.Context, fold []provider.Message, instructions string) (summary, mode string, usage *provider.Usage, providerReqID string, err error) {
+	summary, usage, err = a.summarizeOnce(ctx, fold, instructions)
 	if err != nil {
 		return "", CompactionModeSummarized, usage, "", err
 	}
 	return summary, CompactionModeSummarized, usage, "", nil
-}
-
-// snipToProjection builds a projection that only snips stale tool results.
-func (a *Agent) snipToProjection(ctx context.Context) error {
-	_ = ctx
-	msgs, _ := a.session.snapshotMessagesVersion()
-	snipped, st := a.applyToolResultMaintenanceView(msgs, toolResultSnip)
-	if st.Results == 0 {
-		return nil
-	}
-	ratio := a.tokPerChar()
-	saved := int(float64(st.SavedChars) * ratio)
-	a.sink.Emit(event.Event{Kind: event.Notice, Level: event.LevelInfo, Text: fmt.Sprintf(
-		"snipped %d stale tool results (~%d tokens est.) before compaction", st.Results, saved)})
-	return a.installPruneProjection(snipped, st)
-}
-
-// installPruneProjection stores a projection whose messages are a snipped/pruned
-// view of the canonical transcript (no summarizer call).
-func (a *Agent) installPruneProjection(view []provider.Message, st PruneStats) error {
-	msgs, version := a.session.snapshotMessagesVersion()
-	view = provider.ModelMessages(view)
-	src := estimateMessagesTokens(provider.ModelMessages(msgs))
-	dst := estimateMessagesTokens(view)
-	projVersion := a.compactionState.Projection.ProjectionVersion + 1
-	state := CompactionState{
-		SchemaVersion:     compactionStateSchemaCurrent,
-		TranscriptVersion: version,
-		Projection: ContextProjection{
-			Messages:          view,
-			TranscriptVersion: version,
-			ProjectionVersion: projVersion,
-			CoveredCount:      len(msgs),
-			CoveredPrefixHash: coveredPrefixHash(msgs, len(msgs)),
-			SourceTokens:      src,
-			ProjectionTokens:  dst,
-			CreatedAt:         time.Now().UTC(),
-		},
-		PromptCacheKey:   a.currentPromptCacheKey(),
-		LastCacheState:   a.CacheState(),
-		LastTrigger:      CompactionTriggerSnip,
-		LastMode:         CompactionModeSnip,
-		LastSourceTokens: src,
-		LastResultTokens: dst,
-		UpdatedAt:        time.Now().UTC(),
-	}
-	_ = st
-	return a.installProjection(state)
-}
-
-// emitCompactionTelemetry records structured compaction observability without
-// logging sensitive transcript content.
-func (a *Agent) emitCompactionTelemetry(t CompactionTelemetry) {
-	detail := fmt.Sprintf("trigger=%s mode=%s cache=%s src=%d proj=%d in=%d out=%d hit=%d miss=%d write=%d reqs=%d",
-		t.Trigger, t.Mode, t.CacheState, t.SourceTokens, t.ProjectionTokens,
-		t.InputTokens, t.OutputTokens, t.CacheHitTokens, t.CacheMissTokens, t.CacheWriteTokens, t.RequestCount)
-	if t.ProviderRequestID != "" {
-		detail += " provider_request_id=" + t.ProviderRequestID
-	}
-	if t.Error != "" {
-		detail += " err_type=" + t.Error
-	}
-	level := event.LevelInfo
-	text := "compaction telemetry"
-	if t.Error != "" {
-		level = event.LevelWarn
-		text = "compaction failed"
-	}
-	a.sink.Emit(event.Event{Kind: event.Notice, Level: level, Text: text, Detail: detail})
-}
-
-// emitCompactionAborted resolves a "compacting…" placeholder when a pass fails
-// after the Started event: a Done with no summary tells a frontend to drop the
-// placeholder. The caller still surfaces the reason (a Notice), so this carries
-// no text of its own.
-func (a *Agent) emitCompactionAborted(trigger string) {
-	a.sink.Emit(event.Event{Kind: event.CompactionDone, Compaction: event.Compaction{Trigger: trigger}})
 }

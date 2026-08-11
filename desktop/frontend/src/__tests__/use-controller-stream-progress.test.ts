@@ -32,6 +32,56 @@ function ev(s: typeof initialState, e: WireEvent) {
   return reducer(s, { type: "event", e });
 }
 
+// Desktop keeps ordinary completion receipts off the transcript, but retains
+// details for the change panel and surfaces actionable gaps as a short notice.
+{
+  const before = {
+    ...initialState,
+    seq: 2,
+    items: [{ kind: "user" as const, id: "u1", text: "update it" }],
+  };
+  const complete = ev(before, {
+    kind: "completion_summary",
+    completion: {
+      preset: "balanced",
+      verdict: "complete",
+      mutations: 3,
+      checks_passed: 12,
+      checks_failed: 0,
+      checks_suppressed: 0,
+      review: "passed",
+      gap_kinds: [],
+      constraint_degraded: false,
+    },
+  });
+  eq(complete.items, before.items, "ordinary completion summary stays off the transcript");
+  eq(complete.completionSummary?.preset, "balanced", "ordinary completion summary remains available to the change panel");
+
+  const after = ev(complete, {
+    kind: "completion_summary",
+    completion: {
+      preset: "balanced",
+      verdict: "partial",
+      mutations: 3,
+      checks_passed: 12,
+      checks_failed: 1,
+      checks_suppressed: 2,
+      review: "passed",
+      gap_kinds: ["stale_check"],
+      constraint_degraded: true,
+    },
+  });
+  eq(after.items.length, before.items.length + 1, "actionable completion summary adds one compact transcript notice");
+  const notice = after.items[after.items.length - 1];
+  eq(notice?.kind === "notice" ? notice.variant : "", "completion", "quality gap uses the completion notice variant");
+  eq(notice?.kind === "notice" ? notice.action : "", "open_changes", "quality gap links to the change panel");
+  eq(notice?.kind === "notice" ? notice.text.includes("balanced") : true, false, "compact notice does not expose internal preset values");
+  eq(after.completionSummary?.checks_failed, 1, "actionable completion summary is retained for details");
+
+  const restarted = ev(after, { kind: "turn_started" });
+  eq(restarted.completionSummary, undefined, "a new turn clears the previous turn's quality details");
+}
+
 // --- 1. partial dispatch upserts a running card with argChars ---
 {
   let s = { ...initialState, running: true, turnActive: true };
@@ -360,6 +410,162 @@ function ev(s: typeof initialState, e: WireEvent) {
   } finally {
     Date.now = originalNow;
   }
+}
+
+// --- 7. lastRequestTps pairs the closed interval with the usage tokens ---
+{
+  const originalNow = Date.now;
+  let now = 50_000;
+  Date.now = () => now;
+  try {
+    let s = ev({ ...initialState }, { kind: "turn_started" } as WireEvent);
+    now = 50_100;
+    s = ev(s, { kind: "text", text: "abcd" } as WireEvent);
+    now = 51_100;
+    // The message event closes the interval BEFORE the usage event arrives.
+    s = ev(s, { kind: "message", text: "abcd" } as WireEvent);
+    now = 51_200;
+    s = ev(s, { kind: "usage", usage: {
+      promptTokens: 130, completionTokens: 30, totalTokens: 160,
+      contextPromptTokens: 100, contextCompletionTokens: 20,
+      cacheHitTokens: 0, cacheMissTokens: 100, source: "executor",
+    } } as WireEvent);
+    eq(s.lastRequestTps, 20, "sampling recovery pairs the interval with latest-attempt tokens");
+
+    now = 52_000;
+    s = ev(s, { kind: "text", text: "more" } as WireEvent);
+    now = 52_050;
+    s = ev(s, { kind: "message", text: "more" } as WireEvent);
+    now = 52_100;
+    s = ev(s, { kind: "usage", usage: {
+      promptTokens: 5, completionTokens: 50, totalTokens: 55,
+      cacheHitTokens: 0, cacheMissTokens: 5, source: "subagent",
+    } } as WireEvent);
+    eq(s.lastRequestTps, 20, "non-executor usage neither computes nor consumes the pending interval");
+    now = 52_300;
+    s = ev(s, { kind: "usage", usage: {
+      promptTokens: 10, completionTokens: 30, totalTokens: 40,
+      cacheHitTokens: 0, cacheMissTokens: 10, source: "executor",
+    } } as WireEvent);
+    eq(s.lastRequestTps, null, "intervals under the 500ms gate clear stale request TPS");
+
+    now = 53_000;
+    s = ev(s, { kind: "text", text: "second" } as WireEvent);
+    now = 54_000;
+    s = ev(s, { kind: "message", text: "second" } as WireEvent);
+    now = 54_100;
+    s = ev(s, { kind: "usage", usage: {
+      promptTokens: 10, completionTokens: 30, totalTokens: 40,
+      cacheHitTokens: 0, cacheMissTokens: 10, source: "executor",
+    } } as WireEvent);
+    eq(s.lastRequestTps, 30, "a later executor usage refreshes the request TPS");
+
+    now = 55_000;
+    s = ev(s, { kind: "text", text: "direct" } as WireEvent);
+    now = 56_000;
+    s = ev(s, { kind: "usage", usage: {
+      promptTokens: 10, completionTokens: 40, totalTokens: 50,
+      cacheHitTokens: 0, cacheMissTokens: 10, source: "executor",
+    } } as WireEvent);
+    eq(s.lastRequestTps, 40, "usage measures an interval still open at arrival");
+
+    now = 57_000;
+    s = ev(s, { kind: "turn_done" } as WireEvent);
+    eq(s.lastRequestTps, 40, "request TPS persists across turn boundaries");
+
+    now = 58_000;
+    s = ev(s, { kind: "turn_started" } as WireEvent);
+    now = 58_100;
+    s = ev(s, { kind: "usage", usage: {
+      promptTokens: 10, completionTokens: 8, totalTokens: 18,
+      cacheHitTokens: 0, cacheMissTokens: 10, source: "executor",
+    } } as WireEvent);
+    eq(s.lastRequestTps, null, "usage without a provider interval clears stale request TPS");
+    now = 58_200;
+    s = ev(s, { kind: "tool_dispatch", tool: { id: "final-only", name: "read_file", args: "{}", readOnly: true } } as WireEvent);
+    eq(s.lastRequestTps, null, "a final-only tool dispatch after usage cannot resurrect stale TPS");
+
+    now = 59_000;
+    s = ev(s, { kind: "text", text: "toolcall" } as WireEvent);
+    now = 60_000;
+    s = ev(s, { kind: "tool_dispatch", tool: { id: "t1", name: "read_file", args: "{}", readOnly: true } } as WireEvent);
+    now = 60_100;
+    s = ev(s, { kind: "usage", usage: {
+      promptTokens: 10, completionTokens: 25, totalTokens: 35,
+      cacheHitTokens: 0, cacheMissTokens: 10, source: "executor",
+    } } as WireEvent);
+    eq(s.lastRequestTps, 25, "tool_dispatch closes the interval the next executor usage pairs with");
+
+    now = 61_000;
+    s = ev(s, { kind: "tool_dispatch", tool: { id: "t2", name: "write_file", readOnly: false, partial: true, argChars: 600 } } as WireEvent);
+    now = 62_000;
+    s = ev(s, { kind: "usage", usage: {
+      promptTokens: 10, completionTokens: 30, totalTokens: 40,
+      cacheHitTokens: 0, cacheMissTokens: 10, source: "executor",
+    } } as WireEvent);
+    eq(s.lastRequestTps, 30, "usage closes the interval started by a partial tool dispatch");
+    now = 62_100;
+    s = ev(s, { kind: "tool_dispatch", tool: { id: "t2", name: "write_file", args: "{}", readOnly: false } } as WireEvent);
+    eq(s.lastRequestTps, 30, "the later full tool dispatch preserves the measured request TPS");
+
+    now = 63_000;
+    s = ev(s, { kind: "text", text: "closing" } as WireEvent);
+    now = 64_000;
+    s = ev(s, { kind: "message", text: "closing" } as WireEvent);
+    now = 64_100;
+    s = ev(s, { kind: "tool_dispatch", tool: { id: "t3", name: "write_file", readOnly: false, partial: true, argChars: 300 } } as WireEvent);
+    now = 64_700;
+    s = ev(s, { kind: "tool_dispatch", tool: { id: "t3", name: "write_file", args: "{}", readOnly: false } } as WireEvent);
+    now = 64_800;
+    s = ev(s, { kind: "usage", usage: {
+      promptTokens: 10, completionTokens: 30, totalTokens: 40,
+      cacheHitTokens: 0, cacheMissTokens: 10, source: "executor",
+    } } as WireEvent);
+    // The partial restart begins a new interval; the full dispatch closes it
+    // and overwrites the message-stashed pending with its own (≥500ms) tail.
+    eq(s.lastRequestTps, 50, "a full dispatch overwrites a message-stashed pending with its own tail close");
+
+    now = 65_000;
+    s = ev(s, { kind: "text", text: "slow" } as WireEvent);
+    now = 68_000;
+    s = ev(s, { kind: "message", text: "slow" } as WireEvent);
+    now = 68_100;
+    s = ev(s, { kind: "usage", usage: {
+      promptTokens: 10, completionTokens: 1, totalTokens: 11,
+      cacheHitTokens: 0, cacheMissTokens: 10, source: "executor",
+    } } as WireEvent);
+    eq(s.lastRequestTps, 1 / 3, "slow measurable requests retain their raw sub-one TPS");
+  } finally {
+    Date.now = originalNow;
+  }
+}
+
+// --- 8. context occupancy uses prompt tokens and keeps legacy fallback semantics ---
+{
+  let s = ev({
+    ...initialState,
+    running: true,
+    turnActive: true,
+    context: { ...initialState.context, window: 1_000 },
+  }, { kind: "usage", usage: {
+    promptTokens: 500,
+    completionTokens: 20,
+    totalTokens: 520,
+    contextPromptTokens: 0,
+    contextCompletionTokens: 20,
+    source: "executor",
+  } } as WireEvent);
+  eq(s.context.used, 500, "completion-only latest usage falls back to aggregate prompt occupancy");
+
+  s = ev({ ...s, running: true, turnActive: true }, { kind: "usage", usage: {
+    promptTokens: 700,
+    completionTokens: 30,
+    totalTokens: 730,
+    contextPromptTokens: 450,
+    contextCompletionTokens: 0,
+    source: "executor",
+  } } as WireEvent);
+  eq(s.context.used, 450, "latest-attempt prompt occupancy excludes completion tokens");
 }
 
 process.stdout.write(`\n${passed} passed, ${failed} failed\n`);

@@ -230,27 +230,6 @@ func (c *Config) SetDesktopLanguage(lang string) error {
 	return nil
 }
 
-// SetDesktopCurrency pins the user-global official pricing region independently
-// from language. The name is retained for persisted-schema compatibility.
-// Empty/auto follows the language preference.
-func (c *Config) SetDesktopCurrency(currency string) error {
-	overridePersisted := false
-	switch strings.ToUpper(strings.TrimSpace(currency)) {
-	case "", "AUTO":
-		c.Desktop.Currency = ""
-	case "CNY", "RMB", "CNH":
-		c.Desktop.Currency = "CNY"
-		overridePersisted = true
-	case "USD":
-		c.Desktop.Currency = "USD"
-		overridePersisted = true
-	default:
-		return fmt.Errorf("desktop currency %q: must be auto|CNY|USD", currency)
-	}
-	applyDeepSeekOfficialDefaultPricingWithOverride(c, overridePersisted)
-	return nil
-}
-
 // SetDesktopAppearance sets desktop-only theme preferences. It must not affect
 // CLI theme settings or provider-visible request data.
 func (c *Config) SetDesktopAppearance(theme, style string) error {
@@ -421,21 +400,11 @@ func (c *Config) SetColdResumePrune(enabled bool) error {
 	return nil
 }
 
-// SetCompactRatio updates the user-controlled auto-compaction threshold.
-// Keep the editable range inside the default snip/force guard rails so lowering
-// the threshold cannot accidentally turn normal cache growth into constant
-// compaction, while higher values still retain context-exhaustion headroom.
+// SetCompactRatio updates the sole user-controlled automatic compaction
+// threshold. Allowed range is 0.65–0.85; presets are 0.70 / 0.80 / 0.85.
 func (c *Config) SetCompactRatio(ratio float64) error {
 	if math.IsNaN(ratio) || math.IsInf(ratio, 0) || ratio < 0.65 || ratio > 0.85 {
 		return fmt.Errorf("compact ratio %v: must be between 0.65 and 0.85", ratio)
-	}
-	snip := c.Agent.ToolResultSnipRatio
-	force := c.Agent.CompactForceRatio
-	if snip > 0 && ratio <= snip {
-		return fmt.Errorf("compact ratio %.2f: must be greater than tool result snip ratio %.2f", ratio, snip)
-	}
-	if force > 0 && ratio >= force {
-		return fmt.Errorf("compact ratio %.2f: must be less than force ratio %.2f", ratio, force)
 	}
 	c.Agent.CompactRatio = ratio
 	return nil
@@ -486,14 +455,6 @@ func (c *Config) SetDesktopConversationWidth(width string) error {
 // SetUICloseBehavior is kept for callers compiled against the old edit API.
 func (c *Config) SetUICloseBehavior(mode string) error {
 	return c.SetDesktopCloseBehavior(mode)
-}
-
-// SetExpandThinking sets whether the desktop reasoning/thinking section is
-// expanded by default. It is desktop-only and must not affect CLI output or
-// provider-visible request data.
-func (c *Config) SetExpandThinking(on bool) error {
-	c.Desktop.ExpandThinking = on
-	return nil
 }
 
 // SetShowReasoning sets the CLI's default verbose-reasoning preference. When

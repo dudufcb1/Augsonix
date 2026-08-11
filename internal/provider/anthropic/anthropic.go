@@ -51,14 +51,10 @@ const (
 	// defaultBaseURL is the first-party endpoint; config may override it (e.g. a
 	// gateway). Bedrock/Vertex use a different request shape and are out of scope.
 	defaultBaseURL = "https://api.anthropic.com"
-	// defaultMaxTokens is the conservative output ceiling used when neither the
-	// provider config nor the request supplies one. Anthropic requires max_tokens,
-	// but support is model-specific, so native Anthropic and unknown compatible
-	// gateways must not inherit a universal 128K request.
-	defaultMaxTokens = provider.DefaultReasoningOutputTokens
-	// deepSeekDefaultMaxTokens is safe only for the official DeepSeek Anthropic-
-	// compatible endpoint, whose reasoning models support the higher ceiling.
-	deepSeekDefaultMaxTokens = provider.DefaultHighOutputTokens
+	// defaultMaxTokens is the mandatory Anthropic fallback when neither config
+	// nor request supplies max_tokens. Ordinary turns use 16K; reasoning-capable
+	// paths raise via AutoOutputBudget. 128K is never automatic.
+	defaultMaxTokens = provider.DefaultOrdinaryOutputTokens
 )
 
 func init() {
@@ -93,6 +89,11 @@ func New(cfg provider.Config) (provider.Provider, error) {
 	if root == "" {
 		root = defaultBaseURL
 	}
+	requestURL, _ := cfg.Extra["request_url"].(string)
+	requestURL = strings.TrimSpace(requestURL)
+	if requestURL == "" {
+		requestURL = root + "/v1/messages"
+	}
 	officialDeepSeek := openai.IsDeepSeek(root)
 	keyEnv, _ := cfg.Extra["api_key_env"].(string) // for actionable auth errors
 	keySource, _ := cfg.Extra["api_key_source"].(string)
@@ -101,16 +102,30 @@ func New(cfg provider.Config) (provider.Provider, error) {
 	effort, _ := cfg.Extra["effort"].(string)
 	effort = strings.ToLower(strings.TrimSpace(effort))
 	vision, _ := cfg.Extra["vision"].(bool)
+	// DeepSeek's official Anthropic-compatible endpoint is text-only. Enforce
+	// that wire constraint here as defense in depth, independent of config or
+	// extension capability metadata.
+	vision = vision && !officialDeepSeek
 	webSearch, _ := cfg.Extra["web_search"].(bool)
 	headers, _ := cfg.Extra["headers"].(map[string]string)
 	authHeader, _ := cfg.Extra["auth_header"].(bool)
 	maxOutputTokens, _ := cfg.Extra["max_output_tokens"].(int)
 	if maxOutputTokens <= 0 {
-		// Messages requires max_tokens, so an optional-budget disable request
-		// falls back to the provider's stable mandatory default.
-		maxOutputTokens = defaultMaxTokens
+		// Messages requires max_tokens. 0 = automatic; negative also falls back
+		// because the wire field is mandatory.
+		reasoningOn := officialDeepSeek &&
+			!strings.EqualFold(thinking, "disabled") &&
+			!strings.EqualFold(effort, "disabled") &&
+			!strings.EqualFold(effort, "off") &&
+			!strings.EqualFold(effort, "none")
 		if officialDeepSeek {
-			maxOutputTokens = deepSeekDefaultMaxTokens
+			maxOutputTokens = provider.AutoOutputBudget(reasoningOn, effort)
+		} else {
+			// Native Anthropic and unknown gateways: conservative ordinary default.
+			maxOutputTokens = defaultMaxTokens
+			if strings.EqualFold(thinking, "adaptive") || strings.EqualFold(thinking, "enabled") {
+				maxOutputTokens = provider.AutoOutputBudget(true, effort)
+			}
 		}
 	}
 	httpClient, err := newHTTPClient(cfg)
@@ -123,6 +138,7 @@ func New(cfg provider.Config) (provider.Provider, error) {
 		keyEnv:           keyEnv,
 		keySource:        keySource,
 		baseURL:          root,
+		requestURL:       requestURL,
 		model:            cfg.Model,
 		nativeAnthropic:  strings.EqualFold(root, defaultBaseURL),
 		deepseek:         officialDeepSeek,
@@ -150,6 +166,7 @@ type client struct {
 	keyEnv           string // api_key_env name, surfaced in auth errors
 	keySource        string // source of keyEnv, surfaced in auth errors
 	baseURL          string
+	requestURL       string
 	model            string
 	nativeAnthropic  bool   // first-party endpoint: documented default-5m cache-write pricing applies
 	deepseek         bool   // official DeepSeek Anthropic endpoint: unsigned reasoning replay + automatic cache
@@ -214,7 +231,7 @@ func (c *client) MissingToolCallReasoningWarningIdentity() string {
 		protocol = "deepseek-anthropic"
 	}
 	return strings.Join([]string{
-		"anthropic", strings.TrimSpace(c.name), strings.TrimSpace(c.baseURL),
+		"anthropic", strings.TrimSpace(c.name), strings.TrimSpace(c.requestURL),
 		strings.TrimSpace(c.model), protocol, strings.TrimSpace(c.thinking), strings.TrimSpace(c.effort),
 	}, "\x00")
 }
@@ -281,7 +298,7 @@ func (c *client) Stream(ctx context.Context, req provider.Request) (<-chan provi
 	bufPool.Put(buf)
 
 	newReq := func(ctx context.Context) (*http.Request, error) {
-		httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL+"/v1/messages", bytes.NewReader(body))
+		httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, c.requestURL, bytes.NewReader(body))
 		if err != nil {
 			return nil, err
 		}

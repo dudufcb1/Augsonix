@@ -9,13 +9,15 @@ import (
 	"strings"
 
 	"reasonix/internal/extensioncontract"
+	"reasonix/internal/fileutil"
 	fileencoding "reasonix/internal/fileutil/encoding"
 )
 
 // ManifestAPIVersionV2 is the only native plugin manifest apiVersion Reasonix
 // accepts for install, doctor, and boot. v1 and legacy (no apiVersion) native
-// manifests are rejected. The explicit migrate command is only for legacy
-// pre-extension manifests that omit apiVersion.
+// manifests are rejected by the parser. Legacy pre-extension manifests can be
+// upgraded explicitly, or automatically when they live in Reasonix's managed
+// plugin directory where an atomic backup is safe.
 const ManifestAPIVersionV2 = "reasonix.io/plugin/v2"
 
 // CapabilityRef is the wire form of a capability in a v2 manifest.
@@ -198,17 +200,14 @@ func parseNativeV2(b []byte, root, apiVersion string) (Package, []string, error)
 	if err := validateV2Capabilities(&manifest); err != nil {
 		return Package{}, nil, err
 	}
-	warnings, issues := applyClaudeCompatibility(root, &manifest)
-	if err := validateManifest(root, &manifest); err != nil {
-		return Package{}, warnings, err
-	}
+	var warnings []string
 	pathWarnings, err := validateV1Paths(root, &manifest)
 	warnings = append(warnings, pathWarnings...)
 	if err != nil {
 		return Package{}, warnings, err
 	}
 	pkg := Package{Root: root, ManifestKind: "reasonix", Manifest: manifest}
-	pkg.Compatibility = compatibilityFor(pkg, issues)
+	pkg.Compatibility = compatibilityFor(pkg, nil)
 	return pkg, warnings, nil
 }
 
@@ -373,14 +372,14 @@ func WriteMigratedManifestV2(root string, data []byte) error {
 	path := filepath.Join(root, NativeManifest)
 	if b, err := os.ReadFile(path); err == nil {
 		bak := path + ".bak"
-		if err := os.WriteFile(bak, b, 0o644); err != nil {
+		if err := fileutil.AtomicWriteFile(bak, b, 0o644); err != nil {
 			return fmt.Errorf("migrate: backup: %w", err)
 		}
 	}
 	if !strings.HasSuffix(string(data), "\n") {
 		data = append(data, '\n')
 	}
-	return os.WriteFile(path, data, 0o644)
+	return fileutil.AtomicWriteFile(path, data, 0o644)
 }
 
 // ParseNativeForMigrate accepts legacy native manifests without apiVersion for

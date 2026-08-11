@@ -40,7 +40,8 @@ func SessionRecoveryState(sessionPath string) string {
 
 // SessionContext is the context-projection / compaction-state sidecar
 // (<id>.context.json). It holds the model-visible projection and cache
-// telemetry; the primary .jsonl remains the canonical transcript.
+// telemetry; transcript authority remains with the native event log once one
+// exists, with the primary .jsonl retained as its compatibility checkpoint.
 func SessionContext(sessionPath string) string {
 	sessionPath = strings.TrimSpace(sessionPath)
 	if sessionPath == "" {
@@ -164,6 +165,16 @@ func SessionJobsDir(sessionPath string) string {
 		return ""
 	}
 	return sessionStem(sessionPath) + ".jobs"
+}
+
+// SessionInboxDir is the durable session-level instruction inbox
+// (<id>.inbox/). Manifest metadata and frozen prompt blobs live here.
+func SessionInboxDir(sessionPath string) string {
+	sessionPath = strings.TrimSpace(sessionPath)
+	if sessionPath == "" {
+		return ""
+	}
+	return sessionStem(sessionPath) + ".inbox"
 }
 
 // SessionCleanupPending is the delayed-cleanup marker (<id>.cleanup-pending.json).

@@ -1107,21 +1107,24 @@ func TestToolAfterFailurePolicy(t *testing.T) {
 
 // newCompactionAgent builds an agent whose session has a foldable middle
 // (large assistant turns) so CompactNow always finds a region, with the
-// summarizer scripted to answer "SUMMARY TEXT".
+// summarizer scripted to answer "SUMMARY TEXT". The recent tail stays small so
+// the content-driven candidate lands well under compact_ratio and the 50% ceiling.
 func newCompactionAgent(t *testing.T, d *dispatch.Dispatcher) (*mockProvider, *Agent) {
 	t.Helper()
 	mp := &mockProvider{name: "p", chunks: []provider.Chunk{
 		{Type: provider.ChunkText, Text: "SUMMARY TEXT"}, {Type: provider.ChunkDone},
 	}}
 	sess := NewSession("sys")
-	big := strings.Repeat("a", 4000)
+	big := strings.Repeat("a", 8000)
 	sess.Add(provider.Message{Role: provider.RoleUser, Content: "task"})
 	sess.Add(provider.Message{Role: provider.RoleAssistant, Content: big})
 	sess.Add(provider.Message{Role: provider.RoleUser, Content: "more"})
 	sess.Add(provider.Message{Role: provider.RoleAssistant, Content: big})
-	sess.Add(provider.Message{Role: provider.RoleUser, Content: "again"})
-	sess.Add(provider.Message{Role: provider.RoleAssistant, Content: big})
-	return mp, New(mp, tool.NewRegistry(), sess, Options{ContextWindow: 1000, Extensions: d}, event.Discard)
+	sess.Add(provider.Message{Role: provider.RoleUser, Content: "next"})
+	sess.Add(provider.Message{Role: provider.RoleAssistant, Content: "ok"})
+	return mp, New(mp, tool.NewRegistry(), sess, Options{
+		ContextWindow: 50_000, CompactRatio: 0.85, RecentKeep: 2, Extensions: d,
+	}, event.Discard)
 }
 
 func TestCompactionPrepareReplaceGuidance(t *testing.T) {
@@ -1141,12 +1144,10 @@ func TestCompactionPrepareReplaceGuidance(t *testing.T) {
 	if err := a.CompactNow(context.Background(), ""); err != nil {
 		t.Fatalf("CompactNow: %v", err)
 	}
-	if len(mp.requests) != 1 {
-		t.Fatalf("summarizer requests = %d, want 1", len(mp.requests))
-	}
-	sys := mp.requests[0].Messages[0].Content
-	if !strings.Contains(sys, "EXTENSION GUIDANCE") {
-		t.Fatalf("summarizer system prompt missing the replaced guidance:\n%.200q", sys)
+	for i, req := range mp.requests { // a fold too large for one call is summarized in parts
+		if sys := req.Messages[0].Content; !strings.Contains(sys, "EXTENSION GUIDANCE") {
+			t.Fatalf("summarizer call %d of %d missing the replaced guidance:\n%.200q", i+1, len(mp.requests), sys)
+		}
 	}
 	if sc := joinContents(visibleContext(a)); !strings.Contains(sc, "SUMMARY TEXT") {
 		t.Fatalf("projection missing the summary:\n%.200q", sc)

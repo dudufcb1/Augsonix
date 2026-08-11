@@ -25,6 +25,7 @@ import (
 	"reasonix/internal/jobs"
 	"reasonix/internal/plugin"
 	"reasonix/internal/provider"
+	"reasonix/internal/sessioninbox"
 	"reasonix/internal/store"
 	"reasonix/internal/tool/builtin"
 )
@@ -138,6 +139,15 @@ func Serve(ctx context.Context, r io.Reader, w io.Writer, factory Factory, info 
 	conn.Handle("session/resume", svc.sessionResume)
 	conn.Handle("session/prompt", svc.sessionPrompt)
 	conn.Handle(sessionSteerMethod, svc.sessionSteer)
+	conn.Handle(sessionInboxEnqueueMethod, svc.sessionInboxEnqueue)
+	conn.Handle(sessionInboxListMethod, svc.sessionInboxList)
+	conn.Handle(sessionInboxGetMethod, svc.sessionInboxGet)
+	conn.Handle(sessionInboxUpdateMethod, svc.sessionInboxUpdate)
+	conn.Handle(sessionInboxDeleteMethod, svc.sessionInboxDelete)
+	conn.Handle(sessionInboxMoveMethod, svc.sessionInboxMove)
+	conn.Handle(sessionInboxPauseMethod, svc.sessionInboxSetPaused)
+	conn.Handle(sessionInboxRetryMethod, svc.sessionInboxRetry)
+	conn.Handle(sessionInboxRefreshMethod, svc.sessionInboxRefresh)
 	conn.Handle(sessionReloadExtensionsMethod, svc.sessionReloadExtensions)
 	conn.Handle(sessionStatusMethod, svc.sessionStatus)
 	conn.Handle("session/set_config_option", svc.sessionSetConfigOption)
@@ -310,6 +320,14 @@ type acpSession struct {
 
 func (s *acpSession) begin(ctx context.Context) (context.Context, context.CancelFunc, bool) {
 	runCtx, cancel := context.WithCancel(ctx)
+	// Prompt admission and config-axis changes share this lock. TryLock keeps
+	// ACP admission non-blocking while closing the idle-check/use window in an
+	// in-place role switch.
+	if !s.stateChangeMu.TryLock() {
+		cancel()
+		return nil, nil, false
+	}
+	defer s.stateChangeMu.Unlock()
 	s.mu.Lock()
 	// A queued pendingConfig blocks new turns so a prompt never runs on the
 	// outgoing config. The turn or maintenance that queued it applies it from
@@ -598,7 +616,21 @@ func (s *service) initialize(_ context.Context, raw json.RawMessage) (any, error
 			MCPCapabilities: MCPCapabilities{HTTP: true, SSE: false},
 			Meta: map[string]any{
 				"reasonix.io": ReasonixExtensionCapabilities{
-					SessionSteer:            &SessionSteerCapability{Method: sessionSteerMethod},
+					SessionSteer: &SessionSteerCapability{Method: sessionSteerMethod},
+					SessionInbox: &SessionInboxCapability{
+						SchemaVersion: sessionInboxSchemaVersion,
+						Methods: map[string]string{
+							"enqueue":   sessionInboxEnqueueMethod,
+							"list":      sessionInboxListMethod,
+							"get":       sessionInboxGetMethod,
+							"update":    sessionInboxUpdateMethod,
+							"delete":    sessionInboxDeleteMethod,
+							"move":      sessionInboxMoveMethod,
+							"setPaused": sessionInboxPauseMethod,
+							"retry":     sessionInboxRetryMethod,
+							"refresh":   sessionInboxRefreshMethod,
+						},
+					},
 					SessionReloadExtensions: &SessionReloadExtensionsCapability{Method: sessionReloadExtensionsMethod},
 					ExtensionSurface:        &ExtensionSurfaceCapability{Supported: true, SchemaVersion: reasonixExtensionSurfaceSchemaVersion},
 				},
@@ -1152,7 +1184,7 @@ func (s *service) sessionPrompt(ctx context.Context, raw json.RawMessage) (any, 
 		s.finishTurn(ctx, sess)
 		cancel()
 	}()
-	runErr := sess.ctrl.RunTurn(runCtx, text)
+	runErr := drainACPInbox(runCtx, sess.ctrl, sess.ctrl.RunTurn(runCtx, text))
 
 	statusEvent := sess.status.finishTurn(
 		runErr,
@@ -1180,8 +1212,9 @@ func (s *service) sessionPrompt(ctx context.Context, raw json.RawMessage) (any, 
 	return res, nil
 }
 
-// sessionSteer injects user guidance into an active turn and acknowledges once
-// the agent has queued it for the next safe loop boundary.
+// sessionSteer durably persists guidance then attempts mid-turn admission.
+// Parameter/session errors remain RPC errors; busy rejection returns a
+// disposition so clients can keep the durable follow-up.
 func (s *service) sessionSteer(_ context.Context, raw json.RawMessage) (any, error) {
 	var p SessionSteerParams
 	if err := json.Unmarshal(raw, &p); err != nil {
@@ -1195,10 +1228,32 @@ func (s *service) sessionSteer(_ context.Context, raw json.RawMessage) (any, err
 	if text == "" {
 		return nil, &RPCError{Code: ErrInvalidParams, Message: sessionSteerMethod + ": empty prompt"}
 	}
-	if !sess.currentCtrl().TrySteer(text) {
+	ctrl := sess.currentCtrl()
+	if api, ok := ctrl.(control.SessionAPI); ok {
+		if ensurer, ok := any(api).(interface{ EnsureSessionPath() }); ok {
+			ensurer.EnsureSessionPath()
+		}
+		// Durable path when the session has a transcript path; ephemeral
+		// test controllers without persistence fall back to TrySteer.
+		if api.SessionPath() != "" {
+			rec, err := api.TryEnqueueAndSteer(control.InboxRequest{
+				Intent:  sessioninbox.IntentSteer,
+				Display: text,
+				Raw:     text,
+				Submit:  text,
+				Source:  "acp",
+			})
+			if err != nil {
+				return nil, &RPCError{Code: ErrInvalidRequest, Message: sessionSteerMethod + ": " + err.Error()}
+			}
+			return SessionSteerResult{ItemID: rec.ItemID, Disposition: string(rec.Disposition)}, nil
+		}
+	}
+	// Compatibility for older controller stubs / pathless sessions.
+	if !ctrl.TrySteer(text) {
 		return nil, &RPCError{Code: ErrInvalidRequest, Message: sessionSteerMethod + ": session has no active prompt"}
 	}
-	return SessionSteerResult{}, nil
+	return SessionSteerResult{Disposition: "steer_accepted"}, nil
 }
 
 // sessionReloadExtensions rebuilds a session's agent runtime in place —
@@ -1439,7 +1494,7 @@ func (s *service) sessionSetConfigOption(ctx context.Context, raw json.RawMessag
 		next, err = s.switchSessionModel(ctx, sess, p.Value)
 	case "thought_level":
 		next, err = s.switchSessionEffort(ctx, sess, p.Value)
-	case "work_mode":
+	case "work_mode", "agent_preset":
 		next, err = s.switchSessionRuntimeProfile(ctx, sess, p.Value)
 	case "tool_approval":
 		next, err = s.switchSessionToolApproval(ctx, sess, p.Value)
@@ -1545,7 +1600,7 @@ func (d sessionConfigDelta) applyTo(p *SessionConfigStateParams) {
 		p.Model = d.model
 	case "thought_level":
 		p.EffortOverride = cloneStringPtr(d.effortOverride)
-	case "work_mode":
+	case "work_mode", "agent_preset":
 		p.RuntimeProfile = d.runtimeProfile
 	}
 }
@@ -1581,8 +1636,66 @@ func (s *service) switchSessionEffort(ctx context.Context, sess *acpSession, eff
 }
 
 func (s *service) switchSessionRuntimeProfile(ctx context.Context, sess *acpSession, profile string) (SessionConfigState, error) {
-	deltas := []sessionConfigDelta{{axis: "work_mode", runtimeProfile: profile}}
-	return s.switchSessionConfig(ctx, sess, deltas)
+	// Role settings switch in place without rebuilding the controller when
+	// the session is idle. Busy sessions return an explicit error (no silent
+	// queue). TryLock so a concurrent model/effort rebuild cannot deadlock us.
+	if !sess.stateChangeMu.TryLock() {
+		return SessionConfigState{}, sessionConfigActiveWorkError("session is busy; retry when idle")
+	}
+	defer sess.stateChangeMu.Unlock()
+	sess.mu.Lock()
+	if sess.deleted {
+		sess.mu.Unlock()
+		return SessionConfigState{}, &RPCError{Code: ErrInvalidRequest, Message: "session/set_config_option: session is deleted"}
+	}
+	status := sess.ctrl.RuntimeStatus()
+	if status.PendingPrompt {
+		sess.mu.Unlock()
+		return SessionConfigState{}, sessionConfigActiveWorkError("answer pending prompts before switching execution setting")
+	}
+	if sess.running || status.Running {
+		sess.mu.Unlock()
+		return SessionConfigState{}, sessionConfigActiveWorkError("finish or cancel the active turn before switching execution setting")
+	}
+	if status.BackgroundJobs > 0 {
+		sess.mu.Unlock()
+		return SessionConfigState{}, sessionConfigActiveWorkError("stop background jobs before switching execution setting")
+	}
+	if sess.maintenanceDone != nil {
+		sess.mu.Unlock()
+		return SessionConfigState{}, sessionConfigActiveWorkError("session is busy; retry when idle")
+	}
+	ctrl := sess.ctrl
+	sess.mu.Unlock()
+	if ctrl != nil {
+		ctrl.SetAgentPreset(profile)
+	}
+	// Dual-write session runtime profile label for config option responses.
+	var normalized string
+	switch strings.ToLower(strings.TrimSpace(profile)) {
+	case "light", "economy", "eco", "lite":
+		normalized = "economy"
+	case "delivery", "deliver", "quality":
+		normalized = "delivery"
+	default:
+		normalized = "balanced"
+	}
+	sess.mu.Lock()
+	sess.runtimeProfile = normalized
+	// Keep status planner mode aligned without a controller rebuild.
+	if isLightRuntimeProfile(normalized) {
+		sess.runtimeState.PlannerMode = "off"
+	} else {
+		sess.runtimeState.PlannerMode = "on"
+	}
+	sess.mu.Unlock()
+	sess.saveMetaIfPresent()
+	cfgState, err := s.configStateForSession(ctx, sess)
+	if err != nil {
+		return SessionConfigState{}, &RPCError{Code: ErrInternal, Message: "session/set_config_option: " + err.Error()}
+	}
+	sess.sink.send(configOptionUpdate{SessionUpdate: "config_option_update", ConfigOptions: cfgState.ConfigOptions})
+	return cfgState, nil
 }
 
 // switchSessionConfig resolves and applies one explicit config request without

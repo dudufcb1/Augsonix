@@ -8,6 +8,39 @@ branch.
 
 ### Fixed
 
+- Goal now runs continuously by default: the former 16-round per-Run boundary,
+  10/20/40 cross-Run quotas, default wall-clock budget, and numeric
+  no-progress/Todo-stall pauses no longer stop valid work. Progress guards still
+  detect repeated host outcomes and zero-evidence work, but redirect the model
+  to re-plan instead of producing `goal_run_budget` or `goal_stuck`. Explicit
+  `[agent].goal_token_budget`, `--max-steps`, positive time/cost budgets, manual
+  pause/stop, genuine user/external blockers, and evaluator fail-closed behavior
+  remain available. The Goal token budget defaults to `0` (off); resuming its
+  `budget_spend` pause grants a fresh slice without clearing cumulative usage.
+  Goal status reports turns, provider requests, tokens, the optional configured
+  token threshold, and cumulative active work time. Bot `max_steps` also
+  defaults to `0` (continuous), while positive user configuration is enforced.
+
+- Removed numeric Goal pauses in existing sidecars automatically normalize to
+  `running` without sending a model request. Active Goal sidecars write
+  `turnsLimit: -1` as a downgrade-safe unlimited sentinel while public runtime
+  APIs retain deprecated limit fields as `0`. The migration preserves unknown
+  fields, todos, checkpoints, usage, evidence, and historical metadata.
+
+- Goal is now the sole long-task runtime. Historical AutoResearch sidecars
+  migrate transactionally into Goals with research compatibility metadata. Invalid archives block
+  fail closed and remain read-only, retaining the task id and compatibility mode
+  for a restart or `/goal resume` retry; successful Goal-only sidecars omit the
+  old task id and write an explicit downgrade fence so previous readers cannot
+  reactivate the removed runtime.
+
+- Context-dependent workflow tools now share one host-side execution boundary.
+  Goal, Plan sign-off, and background-job calls cannot reach permissions,
+  hooks, leases, or Execute outside their owning context; mixed batches execute
+  valid calls once and stop safely after one repair. Child agents also isolate
+  inherited Goal, Jobs, and live memory queues, while persisted tool identity
+  records the effective child schema projection.
+
 - **Issue #7575:** Linux Bash under bubblewrap no longer mounts a fresh empty
   `--tmpfs /tmp` on every call. Consecutive commands in the same logical session
   now share a private temporary directory (bound at `/tmp` on Linux, exported via

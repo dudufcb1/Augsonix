@@ -29,11 +29,11 @@
 //
 // Rendering consumes the store through TranscriptProjection (items + paging
 // state); useController dispatches projections into per-tab reducer state.
-
 import { asArray } from "./array";
 import { app } from "./bridge";
-import type { MarkdownBlock } from "./markdownPipeline";
 import { noteHistoryPage, registerTranscriptCacheDiagnostics } from "./sessionDiagnostics";
+import { TranscriptMarkdownCache, type ParsedMarkdownValue } from "./transcriptMarkdownCache";
+export type { ParsedMarkdownValue } from "./transcriptMarkdownCache";
 import { fileDiffFromWire, summarizeFileDiff } from "./tools";
 import {
   historyToolError,
@@ -73,6 +73,8 @@ export interface TranscriptProjection {
   totalTurns: number;
   hasOlder: boolean;
   revision: number;
+  revisionKnown: boolean;
+  digest: string;
 }
 
 export interface LoadOlderResult extends TranscriptProjection {
@@ -142,6 +144,8 @@ interface SessionTranscript {
   startTurn: number;
   endTurn: number;
   revision: number;
+  revisionKnown: boolean;
+  digest: string;
   generation: number;
   bodyBytes: number;
   olderInFlight: boolean;
@@ -154,6 +158,12 @@ const DEFAULT_MARKDOWN_BUDGET = 16 << 20;
 
 function sessionKeyFor(tabId: string, sessionPath: string): string {
   return `${tabId}\n${sessionPath}`;
+}
+
+function sliceRevisionKnown(slice: Pick<HistorySlice, "revision" | "revisionKnown">): boolean {
+  // Compatibility with the first HistorySlice contract: positive revisions
+  // were already canonical, but revisionKnown was not exposed yet.
+  return slice.revisionKnown ?? (slice.revision ?? 0) > 0;
 }
 
 function compareRecords(a: Pick<TranscriptRecord, "order" | "entryId">, b: Pick<TranscriptRecord, "order" | "entryId">): number {
@@ -398,43 +408,22 @@ function applyResolvedField(rec: TranscriptRecord, ref: HistoryContentRef, data:
   }
 }
 
-interface MarkdownCacheEntry {
-  value: ParsedMarkdownValue;
-  bytes: number;
-}
-
-/**
- * Parsed-markdown cache payload (Phase E): the HAST blocks a worker parse
- * produced, plus the exact source text they came from. Callers compare
- * `source` against the text at hand before using the blocks — the entryId +
- * revision key is a content hash, and this comparison is the backstop.
- */
-export interface ParsedMarkdownValue {
-  source: string;
-  blocks: MarkdownBlock[];
-  /** Precomputed byte weight: source UTF-16 size + estimated HAST size. */
-  bytes: number;
-}
-
 export class TranscriptStore {
   private readonly backend: TranscriptBackend;
   private readonly maxResidentSessions: number;
   private readonly historyBodyBudgetBytes: number;
-  private readonly markdownBudgetBytes: number;
   /** Insertion-ordered (oldest first); touch re-inserts at the end. */
   private readonly sessions = new Map<string, SessionTranscript>();
   private readonly tabPins = new Map<string, { live: boolean; active: boolean }>();
   private readonly listeners = new Map<string, Set<(change: TranscriptContentChange) => void>>();
-  private readonly markdownCache = new Map<string, MarkdownCacheEntry>();
-  private markdownBytes = 0;
+  private readonly markdown: TranscriptMarkdownCache;
   private historyEvictions = 0;
-  private markdownEvictions = 0;
 
   constructor(backend: TranscriptBackend, options: TranscriptStoreOptions = {}) {
     this.backend = backend;
     this.maxResidentSessions = Math.max(1, options.maxResidentSessions ?? DEFAULT_MAX_RESIDENT_SESSIONS);
     this.historyBodyBudgetBytes = Math.max(0, options.historyBodyBudgetBytes ?? DEFAULT_HISTORY_BODY_BUDGET);
-    this.markdownBudgetBytes = Math.max(0, options.markdownBudgetBytes ?? DEFAULT_MARKDOWN_BUDGET);
+    this.markdown = new TranscriptMarkdownCache(Math.max(0, options.markdownBudgetBytes ?? DEFAULT_MARKDOWN_BUDGET));
   }
 
   // ── session identity / LRU ────────────────────────────────────────────────
@@ -460,6 +449,8 @@ export class TranscriptStore {
       startTurn: 0,
       endTurn: 0,
       revision: 0,
+      revisionKnown: false,
+      digest: "",
       generation: 0,
       bodyBytes: 0,
       olderInFlight: false,
@@ -558,6 +549,8 @@ export class TranscriptStore {
       totalTurns: session.totalTurns,
       hasOlder: session.hasOlder,
       revision: session.revision,
+      revisionKnown: session.revisionKnown,
+      digest: session.digest,
     };
   }
 
@@ -594,10 +587,10 @@ export class TranscriptStore {
       maxResidentSessions: this.maxResidentSessions,
       bodyBytes: this.totalBodyBytes(),
       bodyBudgetBytes: this.historyBodyBudgetBytes,
-      markdownBytes: this.markdownBytes,
-      markdownBudgetBytes: this.markdownBudgetBytes,
+      markdownBytes: this.markdown.bytes,
+      markdownBudgetBytes: this.markdown.budgetBytes,
       historyEvictions: this.historyEvictions,
-      markdownEvictions: this.markdownEvictions,
+      markdownEvictions: this.markdown.evictions,
     };
   }
 
@@ -607,6 +600,7 @@ export class TranscriptStore {
     const startedAt = typeof performance !== "undefined" ? performance.now() : Date.now();
     const slice = await this.backend.HistorySliceForTab(tabId, req);
     const endedAt = typeof performance !== "undefined" ? performance.now() : Date.now();
+    if (slice.error?.trim()) throw new Error(slice.error.trim());
     const entries = asArray<HistoryEntry>(slice.entries);
     let inlineBytes = 0;
     for (const entry of entries) inlineBytes += recordBytes(entry.message);
@@ -794,11 +788,12 @@ export class TranscriptStore {
   async loadLatest(
     tabId: string,
     sessionPath: string,
-    options: { turns?: number; preferResident?: boolean } = {},
+    options: { turns?: number; preferResident?: boolean; expectedRevision?: number; expectedDigest?: string } = {},
   ): Promise<TranscriptProjection | undefined> {
     const key = sessionKeyFor(tabId, sessionPath);
     const existing = this.sessions.get(key);
-    if (options.preferResident && existing && existing.records.length > 0) {
+    if (options.preferResident && existing && existing.records.length > 0 &&
+      this.matchesExpectedFingerprint(existing, options.expectedRevision, options.expectedDigest)) {
       this.touch(existing);
       return this.projectionOf(existing);
     }
@@ -827,6 +822,8 @@ export class TranscriptStore {
     session.startTurn = slice.startTurn ?? 0;
     session.endTurn = slice.endTurn ?? 0;
     session.revision = slice.revision ?? 0;
+    session.revisionKnown = sliceRevisionKnown(slice);
+    session.digest = slice.digest ?? "";
     this.autoFetchRefs(session);
     this.enforceBudgets();
     if (this.sessions.get(key) !== session) return undefined; // evicted by the budget
@@ -860,18 +857,45 @@ export class TranscriptStore {
         const projection = await this.loadLatest(tabId, sessionPath, options);
         return projection ? { ...projection, kind: "reload", prependItems: [], removeIds: [] } : undefined;
       }
+      if (!this.sameFingerprint(session, slice)) {
+        // A backend that raced a rewrite may return a fresh page instead of a
+        // stale marker. Never prepend rows from a different canonical state.
+        const projection = await this.loadLatest(tabId, sessionPath, options);
+        return projection ? { ...projection, kind: "reload", prependItems: [], removeIds: [] } : undefined;
+      }
       const { items, removeIds } = this.prependRecords(session, asArray<HistoryEntry>(slice.entries));
       session.nextCursor = slice.nextCursor ?? "";
       session.hasOlder = Boolean(slice.hasOlder);
       session.totalTurns = slice.totalTurns ?? session.totalTurns;
       session.startTurn = slice.startTurn ?? session.startTurn;
       session.revision = slice.revision ?? session.revision;
+      session.revisionKnown = sliceRevisionKnown(slice);
+      session.digest = slice.digest ?? session.digest;
       this.enforceBudgets();
       if (this.sessions.get(key) !== session) return undefined;
       return { ...this.projectionOf(session), kind: "prepend", prependItems: items, removeIds };
     } finally {
       session.olderInFlight = false;
     }
+  }
+
+  private matchesExpectedFingerprint(session: SessionTranscript, expectedRevision?: number, expectedDigest?: string): boolean {
+    const digest = (expectedDigest ?? "").trim();
+    const revisionKnown = typeof expectedRevision === "number" && expectedRevision > 0;
+    if (digest !== "" && session.digest !== digest) return false;
+    if (revisionKnown && (!session.revisionKnown || session.revision !== expectedRevision)) return false;
+    if (!revisionKnown && digest === "") {
+      // Metadata identity temporarily missing cannot prove a known resident
+      // projection is current. A backend round trip is the safe fallback.
+      return !session.revisionKnown && session.digest === "";
+    }
+    return true;
+  }
+
+  private sameFingerprint(session: SessionTranscript, slice: HistorySlice): boolean {
+    return session.revision === (slice.revision ?? 0) &&
+      session.revisionKnown === sliceRevisionKnown(slice) &&
+      session.digest === (slice.digest ?? "");
   }
 
   // ── lazy content ──────────────────────────────────────────────────────────
@@ -982,38 +1006,20 @@ export class TranscriptStore {
 
   // ── markdown cache (populated by the rendering/worker phase) ──────────────
 
-  private markdownKey(entryId: string, revision: number): string {
-    return `${entryId}@${revision}`;
-  }
-
   getMarkdown(entryId: string, revision: number): ParsedMarkdownValue | undefined {
-    const key = this.markdownKey(entryId, revision);
-    const entry = this.markdownCache.get(key);
-    if (!entry) return undefined;
-    this.markdownCache.delete(key);
-    this.markdownCache.set(key, entry); // LRU touch
-    return entry.value;
+    return this.markdown.get(entryId, revision);
   }
 
   setMarkdown(entryId: string, revision: number, value: ParsedMarkdownValue): void {
-    const key = this.markdownKey(entryId, revision);
-    const previous = this.markdownCache.get(key);
-    if (previous) this.markdownBytes -= previous.bytes;
-    const bytes = Math.max(0, value.bytes);
-    this.markdownCache.set(key, { value, bytes });
-    this.markdownBytes += bytes;
-    while (this.markdownBytes > this.markdownBudgetBytes && this.markdownCache.size > 1) {
-      const oldest = this.markdownCache.keys().next();
-      if (oldest.done) break;
-      const victim = this.markdownCache.get(oldest.value);
-      if (victim) this.markdownBytes -= victim.bytes;
-      this.markdownCache.delete(oldest.value);
-      this.markdownEvictions += 1;
-    }
+    this.markdown.set(entryId, revision, value);
+  }
+
+  pinMarkdown(entryId: string, revision: number): () => void {
+    return this.markdown.pin(entryId, revision);
   }
 
   markdownCacheSize(): number {
-    return this.markdownCache.size;
+    return this.markdown.size();
   }
 
   // ── subscriptions ─────────────────────────────────────────────────────────

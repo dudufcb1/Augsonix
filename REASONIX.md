@@ -15,6 +15,11 @@ agent. It is the Reasonix analog of Claude Code's CLAUDE.md.
   the frontends `cli`, `serve`, `acp`, `bot`, `botruntime`, `boot` and the hosts
   `cmd/`, `desktop/` may import `control`; nothing below a frontend may import
   one. The declared sets live in `tools/repolint/layers.go`.
+- Subagent delegation keeps five concepts apart: a profile says how a worker
+  thinks, `TaskSpec` what this call wants, `CapabilityGrant` what it may touch,
+  `ContextRequest` what it starts from, `SchedulerPolicy` when it runs. Put a
+  field in whichever member decides its value — profiles carry ceilings, never
+  per-call values. `internal/agent/profile_boundary_test.go` enforces it.
 - Cache-first: the system-prompt prefix (base prompt + tools + memory) must stay
   byte-stable across turns so DeepSeek's automatic prefix cache stays warm. Never
   mutate it mid-session — ride the turn tail instead (see `control.Compose`).
@@ -66,11 +71,14 @@ Run these **before every commit** to catch the fastest CI failures locally:
 ```bash
 gofmt -w .                          # catches gofmt (saves ~13s CI)
 go vet ./...                        # catches vet warnings (saves ~52s CI/lint)
-go run ./tools/repolint             # catches comment/size/layering regressions
+make lint                           # golangci-lint at CI's pin + repolint
 go test ./internal/tool/builtin/ ./internal/boot/  # catches tool/boot test breaks
 ```
 
-CI runs `golangci-lint` (not locally available), but gofmt + vet already block ~80% of fast-fail scenarios.
+`make lint` runs both gates CI runs, at the version in `.golangci-version`;
+`make lint-install` installs it. Do not skip it: a `modernize` finding never
+shows up in `go vet`, and the CI round trip that catches it instead costs ten
+minutes.
 
 ## Import cycle rule
 

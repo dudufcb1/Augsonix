@@ -54,6 +54,7 @@ class FakeBackend {
   contentGate: ReturnType<typeof deferred<HistoryContentChunk>> | undefined;
   staleNextCursor = false;
   revision = 1;
+  digest = "digest-1";
 
   constructor(
     private readonly messages: HistoryMessage[],
@@ -98,6 +99,8 @@ class FakeBackend {
       endTurn: turns.length > 0 ? Math.max(...turns) : 0,
       stale: false,
       revision: this.revision,
+      revisionKnown: true,
+      digest: this.digest,
     };
   }
 
@@ -111,7 +114,7 @@ class FakeBackend {
     }
     let before = this.messages.length;
     if (req.cursor) {
-      if (this.staleNextCursor) return { entries: [], nextCursor: "", hasOlder: false, totalTurns: 0, startTurn: 0, endTurn: 0, stale: true, revision: this.revision };
+      if (this.staleNextCursor) return { entries: [], nextCursor: "", hasOlder: false, totalTurns: 0, startTurn: 0, endTurn: 0, stale: true, revision: this.revision, revisionKnown: true, digest: this.digest };
       const decoded = JSON.parse(atob(req.cursor)) as { before?: number };
       before = Math.min(before, decoded.before ?? before);
     }
@@ -323,7 +326,13 @@ console.log("\ntranscript store");
 // ── markdown cache budget + LRU ─────────────────────────────────────────────
 {
   const store = new TranscriptStore(new FakeBackend([]), { markdownBudgetBytes: 120 });
-  const parsed = (text: string) => ({ source: text, blocks: [], bytes: text.length * 2 });
+  const parsed = (text: string) => ({
+    source: text,
+    blocks: [],
+    selectionText: text,
+    selectionRevision: 1,
+    bytes: text.length * 2,
+  });
   store.setMarkdown("e1", 1, parsed("a".repeat(20))); // 40 bytes
   store.setMarkdown("e2", 1, parsed("b".repeat(20)));
   store.setMarkdown("e3", 1, parsed("c".repeat(20)));
@@ -332,6 +341,11 @@ console.log("\ntranscript store");
   eq(store.getMarkdown("e2", 1), undefined, "markdown LRU evicts the least-recently-used entry");
   ok(store.getMarkdown("e1", 1) !== undefined, "recently read markdown entry survives");
   eq(store.getMarkdown("e1", 2), undefined, "markdown entries key on entryId + revision");
+
+  const release = store.pinMarkdown("e1", 1);
+  store.setMarkdown("e5", 1, parsed("e".repeat(50)));
+  ok(store.getMarkdown("e1", 1) !== undefined, "active selection pins its markdown projection");
+  release();
 }
 
 // ── lazy content refs ───────────────────────────────────────────────────────
@@ -442,6 +456,39 @@ console.log("\ntranscript store");
   const older = await store.loadOlder("tab-r", "/s/r.jsonl", { turns: 10 });
   eq(older?.kind, "prepend", "paging resumes after the reload");
   eq(older?.prependItems.length, 20, "older page prepends after reload");
+}
+
+// ── same-path resident identity ────────────────────────────────────────────
+{
+  const backend = new FakeBackend([{ role: "user", content: "u" }, { role: "assistant", content: "a" }]);
+  const store = new TranscriptStore(backend);
+  await store.loadLatest("tab-fp", "/s/fp.jsonl", { expectedRevision: 1, expectedDigest: "digest-1" });
+  const callsAfterFirstLoad = backend.sliceCalls.length;
+  const resident = await store.loadLatest("tab-fp", "/s/fp.jsonl", {
+    preferResident: true,
+    expectedRevision: 1,
+    expectedDigest: "digest-1",
+  });
+  eq(backend.sliceCalls.length, callsAfterFirstLoad, "matching canonical fingerprint reuses the resident projection");
+  eq(resident?.revision, 1, "resident projection retains its canonical revision");
+
+  backend.revision = 2;
+  backend.digest = "digest-2";
+  const refreshed = await store.loadLatest("tab-fp", "/s/fp.jsonl", {
+    preferResident: true,
+    expectedRevision: 2,
+    expectedDigest: "digest-2",
+  });
+  eq(backend.sliceCalls.length, callsAfterFirstLoad + 1, "changed same-path fingerprint bypasses the resident projection");
+  eq(refreshed?.digest, "digest-2", "fresh projection adopts the advanced canonical digest");
+
+  backend.HistorySliceForTab = async () => ({ ...backend.slice(0, 2), revision: 3, revisionKnown: undefined, digest: "digest-3" });
+  const compatible = await store.loadLatest("tab-fp", "/s/fp.jsonl", {
+    preferResident: true,
+    expectedRevision: 3,
+    expectedDigest: "digest-3",
+  });
+  eq(compatible?.revisionKnown, true, "positive legacy slice revision implies a known canonical identity");
 }
 
 console.log(`\n${passed} passed, ${failed} failed`);

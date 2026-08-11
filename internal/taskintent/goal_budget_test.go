@@ -75,6 +75,18 @@ func TestGoalBareFaultDoesNotChangeDeliveryClassification(t *testing.T) {
 	}
 }
 
+func TestClassifyGoalBudgetMatrix(t *testing.T) {
+	if got := ClassifyGoalBudget("hello"); got != BudgetClassSimple {
+		t.Fatalf("simple = %q", got)
+	}
+	if got := ClassifyGoalBudget("fix the crash in a.go"); got != BudgetClassWrite {
+		t.Fatalf("write = %q", got)
+	}
+	if got := ClassifyGoalBudget("持续排查这个线上卡顿直到根因明确，并验证修复"); got != BudgetClassResearch {
+		t.Fatalf("research = %q", got)
+	}
+}
+
 func TestTaskFaultSignalsSharedWithGoalClassification(t *testing.T) {
 	// Shared fault list must keep task recognition and Goal classification
 	// aligned for bare problem statements.

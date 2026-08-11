@@ -14,6 +14,7 @@ package event
 import (
 	"encoding/json"
 
+	"reasonix/internal/billing"
 	"reasonix/internal/evidence"
 	"reasonix/internal/nilutil"
 	"reasonix/internal/provider"
@@ -107,10 +108,47 @@ const (
 	// host-local only — never persisted or sent to the model. Appended last to
 	// keep earlier Kind values wire-stable; older clients ignore unknown kinds.
 	StreamAttempt
+	// ContextMaintenance reports a free tool-result maintenance or a durable
+	// blocked/noop outcome. It is separate from CompactionStarted/Done so UIs do
+	// not render a paid-summary card for a cache-preserving view update.
+	ContextMaintenanceEvent
+	// WorkspaceChanged reports a debounced host-side workspace mutation.
+	WorkspaceChanged
+	// TurnPhase reports a host-side work phase for the active turn (working |
+	// checking | verifying | reviewing). Content-free; Text holds the phase.
+	TurnPhase
+	// CompletionSummary reports a content-free end-of-turn quality summary for
+	// role-setting strategies (preset, verdict, check counts, review status).
+	CompletionSummary
 	// KindCount is a sentinel one past the last real Kind. New event kinds must
 	// be inserted above it so completeness tests cover them automatically.
 	KindCount
 )
+
+// TurnPhaseName is the machine-readable phase on TurnPhase events.
+type TurnPhaseName string
+
+const (
+	TurnPhaseWorking   TurnPhaseName = "working"
+	TurnPhaseChecking  TurnPhaseName = "checking"
+	TurnPhaseVerifying TurnPhaseName = "verifying"
+	TurnPhaseReviewing TurnPhaseName = "reviewing"
+)
+
+// CompletionSummaryInfo is the content-free quality summary on CompletionSummary
+// events. It never carries user prompts, file contents, command args, or
+// reviewer reasoning.
+type CompletionSummaryInfo struct {
+	Preset             string // light | balanced | delivery
+	Verdict            string // complete | partial | blocked | continue
+	Mutations          int
+	ChecksPassed       int
+	ChecksFailed       int
+	ChecksSuppressed   int
+	Review             string // none | passed | warned | failed | unavailable
+	GapKinds           []string
+	ConstraintDegraded bool
+}
 
 // StreamAttemptAction is the lifecycle phase of a local sampling attempt.
 type StreamAttemptAction string
@@ -222,6 +260,10 @@ type Tool struct {
 	// Execution is optional local shell metadata (ToolResult). Never sent to
 	// model providers; omitempty keeps old wire readers compatible.
 	Execution *ShellExecution
+	// Workspace mutation metadata is host-only and is omitted from eventwire.
+	WorkspaceMutation bool
+	WorkspacePaths    []string
+	WorkspaceAllPaths bool
 }
 
 // ShellExecution mirrors tool.ShellExecution for event sinks without importing
@@ -412,6 +454,22 @@ type Compaction struct {
 	Archive  string // Done: path the dropped originals were archived to ("" if none)
 }
 
+// ContextMaintenance is the typed wire-safe receipt for snip/prune/noop/
+// blocked operations. Transcript bytes are represented by hashes and counts.
+type ContextMaintenance struct {
+	Status              string `json:"status,omitempty"`
+	Action              string `json:"action,omitempty"`
+	Trigger             string `json:"trigger,omitempty"`
+	OperationID         string `json:"operationId,omitempty"`
+	InputTokens         int    `json:"inputTokens,omitempty"`
+	ResultTokens        int    `json:"resultTokens,omitempty"`
+	SavedTokens         int    `json:"savedTokens,omitempty"`
+	AffectedToolResults int    `json:"affectedToolResults,omitempty"`
+	ProjectionVersion   uint64 `json:"projectionVersion,omitempty"`
+	CacheBreak          bool   `json:"cacheBreak,omitempty"`
+	Reason              string `json:"reason,omitempty"`
+}
+
 // GuardianResult carries the outcome of a guardian sub-agent safety review.
 // Emitted with Kind=GuardianAssessment after each review completes.
 type GuardianResult struct {
@@ -477,23 +535,24 @@ const (
 // wording edits in Go no longer silently break localization. Values are
 // wire-stable: never rename or reuse one once shipped.
 const (
-	NoticeCodeFinalReadiness                = "final_readiness"
-	NoticeCodeEmptyFinal                    = "empty_final"
-	NoticeCodeExecutorHandoff               = "executor_handoff"
-	NoticeCodeToolBudget                    = "tool_budget"
-	NoticeCodeLoopGuard                     = "loop_guard"
-	NoticeCodeProgressGuard                 = "progress_guard"
-	NoticeCodeEvidenceNudge                 = "evidence_nudge"
-	NoticeCodeReasoningGovernor             = "reasoning_governor"
-	NoticeCodeWorkspaceLease                = "workspace_lease"
-	NoticeCodeCancelledTurn                 = "cancelled_turn_display"
-	NoticeCodeUnappliedSteer                = "unapplied_steer"
-	NoticeCodeSessionRecoveryForked         = "session_recovery_forked"
-	NoticeCodeSessionRecoveryAdopted        = "session_recovery_adopted"
-	NoticeCodeSessionRecoveryAdoptedCovered = "session_recovery_adopted_covered"
-	NoticeCodeSessionRecoveryDepthCap       = "session_recovery_depth_cap"
-	NoticeCodeSessionShutdownRecoveryForked = "session_shutdown_recovery_forked"
-	NoticeCodeDecisionReceipt               = "decision_receipt"
+	NoticeCodeFinalReadiness                                    = "final_readiness"
+	NoticeCodeEmptyFinal                                        = "empty_final"
+	NoticeCodeExecutorHandoff                                   = "executor_handoff"
+	NoticeCodeToolBudget                                        = "tool_budget"
+	NoticeCodePromptQueued                                      = "prompt_queued"
+	NoticeCodeLoopGuard                                         = "loop_guard"
+	NoticeCodeProgressGuard                                     = "progress_guard"
+	NoticeCodeEvidenceNudge                                     = "evidence_nudge"
+	NoticeCodeReasoningGovernor                                 = "reasoning_governor"
+	NoticeCodeWorkspaceLease                                    = "workspace_lease"
+	NoticeCodeCancelledTurn                                     = "cancelled_turn_display"
+	NoticeCodeUnappliedSteer                                    = "unapplied_steer"
+	NoticeCodeSessionRecoveryForked                             = "session_recovery_forked"
+	NoticeCodeSessionRecoveryAdopted                            = "session_recovery_adopted"
+	NoticeCodeSessionRecoveryAdoptedCovered                     = "session_recovery_adopted_covered"
+	NoticeCodeSessionRecoveryDepthCap                           = "session_recovery_depth_cap"
+	NoticeCodeSessionShutdownRecoveryForked                     = "session_shutdown_recovery_forked"
+	NoticeCodeDecisionReceipt, NoticeCodeContextEditingFallback = "decision_receipt", "context_editing_fallback"
 )
 
 type Event struct {
@@ -506,7 +565,8 @@ type Event struct {
 	MemoryCitations  []provider.MemoryCitation // Message: local memory references displayed by rich frontends
 	Tool             Tool                      // ToolDispatch / ToolResult
 	Usage            *provider.Usage           // Usage
-	Pricing          *provider.Pricing         // Usage: for cost display (nil = omit cost)
+	Pricing          *provider.Pricing         // Usage: rate card for quote middleware (nil = omit cost)
+	CostQuote        *billing.CostQuote        // Usage: host-side quote; sinks must not reprice
 	Source           string                    // optional display/event source (executor, planner, subagent, ...)
 	UsageSource      string                    // Usage: billable call source; empty means executor for compatibility
 	CacheDiagnostics *CacheDiagnostics         // Usage: cache-churn attribution (nil = N/A)
@@ -525,13 +585,54 @@ type Event struct {
 	Cancelled       bool                     // TurnDone: Cancel was requested while the turn was active
 	Outcome         string                   // TurnDone: optional machine-readable recoverable outcome
 	Readiness       *FinalReadiness          // TurnDone: structured final-readiness recovery state
+	Receipt         *CompletionReceipt       // TurnDone: what the host verified, and what it could not
+	CheckpointTurn  *int                     // TurnDone: authoritative checkpoint for this turn's visible user message
 	Compaction      Compaction               // Compaction
+	Maintenance     *ContextMaintenance      // ContextMaintenanceEvent
 	Guardian        GuardianResult
 	DecisionReceipt *provider.DecisionReceipt // Notice: durable user decision receipt
 	RetryAttempt    int                       // Retrying: 1-based attempt about to be made
 	RetryMax        int                       // Retrying: total attempts before giving up
 	RetryScope      RetryScope                // Retrying: optional "headers" | "stream"; empty for older emitters
 	StreamAttempt   StreamAttemptInfo         // StreamAttempt lifecycle
+	// ItemID correlates Steer / unapplied-steer / TurnDone with a durable
+	// session-inbox entry. Empty for legacy callers that still use text only.
+	ItemID    string
+	Workspace *WorkspaceChangedPayload // WorkspaceChanged (host-local)
+	// PhaseName is set on TurnPhase events (working|checking|verifying|reviewing).
+	PhaseName TurnPhaseName
+	// Completion is set on CompletionSummary events.
+	Completion *CompletionSummaryInfo
+}
+
+type WorkspaceWatchState string
+
+const (
+	WorkspaceWatchActive      WorkspaceWatchState = "active"
+	WorkspaceWatchDegraded    WorkspaceWatchState = "degraded"
+	WorkspaceWatchUnavailable WorkspaceWatchState = "unavailable"
+)
+
+type WorkspaceRevision struct {
+	Content     uint64 `json:"content"`
+	Tree        uint64 `json:"tree"`
+	WorkingTree uint64 `json:"workingTree"`
+	GitMeta     uint64 `json:"gitMeta"`
+	Session     uint64 `json:"session"`
+}
+
+type WorkspacePathChange struct {
+	Path    string `json:"path"`
+	OldPath string `json:"oldPath,omitempty"`
+	Op      string `json:"op"`
+}
+
+type WorkspaceChangedPayload struct {
+	Revisions  WorkspaceRevision
+	Changes    []WorkspacePathChange
+	AllPaths   bool
+	Source     string
+	WatchState WorkspaceWatchState
 }
 
 // ReadinessAuditSink is an optional sink capability. Sinks that do not care
@@ -617,6 +718,82 @@ func RecordContractShadow(s Sink, a ContractShadowAudit) {
 	}
 	if cs, ok := s.(ContractShadowAuditSink); ok {
 		cs.RecordContractShadow(a)
+	}
+}
+
+// CompletionReportAudit is the host-authored completion report's end-of-turn
+// summary: counts, enums, and gap kinds only, never paths or command text.
+// The gap counters carry the point — what the turn left unproven.
+type CompletionReportAudit struct {
+	Verdict             string
+	Risk                string
+	Criteria            int
+	CriteriaSatisfied   int
+	Changes             int
+	ChangesUnreviewed   int
+	Verifications       int
+	VerificationsFailed int
+	VerificationsStale  int
+	Gaps                int
+	GapKinds            []string
+	// ClaimsVerified counts the turn's own asserted verifications;
+	// ClaimsUnbacked is how many of them the ledger did not support.
+	ClaimsVerified int
+	ClaimsUnbacked int
+}
+
+// CompletionReportAuditSink is an optional sink capability; implementations
+// must keep it content-free, like every other audit channel.
+type CompletionReportAuditSink interface {
+	RecordCompletionReport(CompletionReportAudit)
+}
+
+// RecordCompletionReport forwards the completion summary only to sinks that
+// explicitly opt in. Ordinary UI sinks receive nothing.
+func RecordCompletionReport(s Sink, a CompletionReportAudit) {
+	if nilutil.IsNil(s) {
+		return
+	}
+	if cs, ok := s.(CompletionReportAuditSink); ok {
+		cs.RecordCompletionReport(a)
+	}
+}
+
+// MemoryRecallAudit summarizes one automatic-recall decision: identifiers,
+// scores, and budget numbers only — never the query or fact text.
+type MemoryRecallAudit struct {
+	Hits       []MemoryRecallHit
+	UsedChars  int
+	Omitted    int
+	Suppressed string // reason recall stayed silent; "" when hits were injected
+	// Shadow is the Retrieval V2 ranking (telemetry only, never served).
+	Shadow []MemoryRecallHit
+}
+
+// MemoryRecallHit is one recalled fact's content-free fingerprint.
+type MemoryRecallHit struct {
+	ID        string
+	Revision  int
+	Scope     string
+	Type      string
+	Freshness string
+	Score     float64
+}
+
+// MemoryRecallSink is an optional sink capability; implementations must keep
+// it content-free, like every other audit channel.
+type MemoryRecallSink interface {
+	RecordMemoryRecall(MemoryRecallAudit)
+}
+
+// RecordMemoryRecall forwards a recall decision only to sinks that explicitly
+// opt in. Ordinary UI sinks receive nothing.
+func RecordMemoryRecall(s Sink, a MemoryRecallAudit) {
+	if nilutil.IsNil(s) {
+		return
+	}
+	if mr, ok := s.(MemoryRecallSink); ok {
+		mr.RecordMemoryRecall(a)
 	}
 }
 

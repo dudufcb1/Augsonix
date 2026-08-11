@@ -90,7 +90,7 @@ func TestOfficialDeepSeekProviderWideVisionInputSavesImageForTextModel(t *testin
 	}
 }
 
-func TestOfficialDeepSeekExplicitFutureVisionInputUsesImageParts(t *testing.T) {
+func TestOfficialDeepSeekExplicitModelVisionInputMatchesTextOnlyRequest(t *testing.T) {
 	p, err := New(provider.Config{
 		Name:    "deepseek",
 		BaseURL: "https://api.deepseek.com",
@@ -104,17 +104,37 @@ func TestOfficialDeepSeekExplicitFutureVisionInputUsesImageParts(t *testing.T) {
 		t.Fatalf("New: %v", err)
 	}
 	c := p.(*client)
-	if !c.vision {
-		t.Fatal("explicit model-scoped vision must remain enabled on the official DeepSeek endpoint")
+	if c.vision {
+		t.Fatal("explicit model-scoped vision must not bypass the official DeepSeek endpoint guard")
 	}
 
-	req := c.buildRequest(provider.Request{Messages: []provider.Message{{
+	textOnly := provider.Request{Messages: []provider.Message{{
+		Role: provider.RoleUser, Content: "describe",
+	}}}
+	withImage := provider.Request{Messages: []provider.Message{{
 		Role: provider.RoleUser, Content: "describe",
 		Images: []string{"data:image/png;base64,AAAA"},
-	}}})
-	parts, ok := req.Messages[0].Content.([]chatContentPart)
-	if !ok || len(parts) != 2 || parts[1].ImageURL == nil {
-		t.Fatalf("explicit future DeepSeek content = %#v, want [text, image_url]", req.Messages[0].Content)
+	}}}
+	textBody, err := json.Marshal(c.buildRequest(textOnly))
+	if err != nil {
+		t.Fatalf("marshal text request: %v", err)
+	}
+	imageBody, err := json.Marshal(c.buildRequest(withImage))
+	if err != nil {
+		t.Fatalf("marshal image request: %v", err)
+	}
+	// Lo que no puede pasar es que los bytes de la imagen viajen a un endpoint
+	// que no los acepta. Este fork ademas no la descarta en silencio: la guarda
+	// y deja en su lugar la ruta, para que el modelo pueda pedirla con
+	// read_image en vez de quedarse sin saber que existio.
+	if strings.Contains(string(imageBody), "base64") || strings.Contains(string(imageBody), "image_url") {
+		t.Fatalf("la imagen viajo al endpoint oficial: %s", imageBody)
+	}
+	if !strings.Contains(string(imageBody), "read_image") {
+		t.Fatalf("la imagen desaparecio sin dejar como recuperarla: %s", imageBody)
+	}
+	if len(textBody) == 0 {
+		t.Fatal("la peticion de solo texto quedo vacia")
 	}
 }
 
@@ -123,21 +143,27 @@ func TestOfficialDeepSeekDoesNotInjectToolResultImages(t *testing.T) {
 		Name:    "deepseek",
 		BaseURL: "https://api.deepseek.com/v1",
 		Model:   "deepseek-v4-pro",
-		Extra:   map[string]any{"vision": true},
+		Extra: map[string]any{
+			"vision":                true,
+			"vision_model_explicit": true,
+		},
 	})
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
-	req := p.(*client).buildRequest(provider.Request{Messages: []provider.Message{
+	plainMessages := []provider.Message{
 		{Role: provider.RoleUser, Content: "take a screenshot"},
 		{Role: provider.RoleAssistant, ToolCalls: []provider.ToolCall{{
 			ID: "c1", Name: "shot", Arguments: "{}",
 		}}},
 		{
 			Role: provider.RoleTool, ToolCallID: "c1", Name: "shot",
-			Content: "[image: image/png]", Images: []string{"data:image/png;base64,AAAA"},
+			Content: "[image: image/png]",
 		},
-	}})
+	}
+	imageMessages := append([]provider.Message(nil), plainMessages...)
+	imageMessages[2].Images = []string{"data:image/png;base64,AAAA"}
+	req := p.(*client).buildRequest(provider.Request{Messages: imageMessages})
 	if len(req.Messages) != 3 {
 		t.Fatalf("messages = %d, want 3 without an injected image message", len(req.Messages))
 	}
@@ -147,6 +173,18 @@ func TestOfficialDeepSeekDoesNotInjectToolResultImages(t *testing.T) {
 	}
 	if strings.Contains(string(body), "image_url") || strings.Contains(string(body), "base64,AAAA") {
 		t.Fatalf("official DeepSeek request leaked tool image payload: %s", body)
+	}
+	plainBody, err := json.Marshal(p.(*client).buildRequest(provider.Request{Messages: plainMessages}))
+	if err != nil {
+		t.Fatalf("marshal plain request: %v", err)
+	}
+	// Una imagen que llega en el resultado de una herramienta queda reducida a
+	// su marcador; el rescate a disco es para las que adjunta el usuario.
+	if !strings.Contains(string(body), "[image:") {
+		t.Fatalf("no quedo marca de que hubo una imagen: %s", body)
+	}
+	if len(plainBody) == 0 {
+		t.Fatal("la peticion sin imagen quedo vacia")
 	}
 }
 

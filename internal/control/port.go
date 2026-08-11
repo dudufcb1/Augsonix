@@ -4,7 +4,6 @@ import (
 	"context"
 
 	"reasonix/internal/agent"
-	"reasonix/internal/autoresearch"
 	"reasonix/internal/billing"
 	"reasonix/internal/checkpoint"
 	"reasonix/internal/command"
@@ -101,19 +100,22 @@ type Goals interface {
 	Goal() string
 	GoalStatus() string
 	SetGoal(goal string)
+	// SetGoalWithResearchMode is retained for deprecated CLI budget flags. The
+	// mode is translated at the boundary and is not stored in the Goal runtime.
 	SetGoalWithResearchMode(goal string, researchMode GoalResearchMode)
 	ResumeGoal() bool
 	PauseGoal() bool
 	GoalRuntime() GoalRuntimeView
 	GoalStrict(strict bool)
 	ClearGoal()
-	AutoResearchSummary() (*autoresearch.Summary, bool)
-	AutoResearchList() ([]autoresearch.Summary, bool)
-	AutoResearchFindings(limit int) ([]autoresearch.Finding, bool)
-	RecordAutoResearchEvidence(criterionID string, input AutoResearchEvidenceInput) error
 	ResetPlannerSession()
 	PlanMode() bool
 	SetPlanMode(v bool)
+	// AgentPreset is the session role setting (light|balanced|delivery).
+	AgentPreset() string
+	// SetAgentPreset updates the role setting for subsequent turns without
+	// rebuilding the controller.
+	SetAgentPreset(preset string)
 }
 
 // SessionHistory covers checkpoint/rewind, branch/fork, and the log-restructuring
@@ -138,6 +140,7 @@ type SessionHistory interface {
 	SwitchBranch(ref string) (agent.BranchInfo, error)
 	Compact(ctx context.Context, instructions string) error
 	CompactRatio() float64
+	ContextReport() (summary, detail string)
 	SummarizeFrom(ctx context.Context, turn int) error
 	SummarizeUpTo(ctx context.Context, turn int) error
 }
@@ -200,6 +203,7 @@ type Capabilities interface {
 // Status covers read-only run/usage/billing telemetry and task list state.
 type Status interface {
 	ContextSnapshot() (int, int)
+	ContextMaintenanceSnapshot() agent.ContextMaintenanceSnapshot
 	LastUsage() *provider.Usage
 	Balance(ctx context.Context) (*billing.Balance, error)
 	Jobs() []jobs.View
@@ -213,6 +217,10 @@ type SessionPersistence interface {
 	Snapshot() error
 	SnapshotForShutdown() error
 	SnapshotActivity() error
+	// SessionHasUnsavedChanges reports whether the in-memory transcript is
+	// newer than the durable session file. Frontends use this to avoid
+	// replacing a failed/contended save with stale disk history.
+	SessionHasUnsavedChanges() bool
 	SessionCache() (hit, miss int)
 	BeginDestroySession(sessionPath string) SessionDestroyHandle
 	CloseAfterDestroy()
@@ -253,6 +261,7 @@ type SessionAPI interface {
 	SessionPersistence
 	Input
 	Settings
+	Inbox
 }
 
 // Compile-time proof that the concrete controller satisfies each sub-port and
@@ -270,5 +279,6 @@ var (
 	_ SessionPersistence = (*Controller)(nil)
 	_ Input              = (*Controller)(nil)
 	_ Settings           = (*Controller)(nil)
+	_ Inbox              = (*Controller)(nil)
 	_ SessionAPI         = (*Controller)(nil)
 )

@@ -32,6 +32,12 @@ func (s *syncSink) Emit(e Event) {
 	s.inner.Emit(e)
 }
 
+func (s *syncSink) RecordDelegationAudit(a evidence.DelegationAudit) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	RecordDelegationAudit(s.inner, a)
+}
+
 func (s *syncSink) RecordReadinessAudit(a evidence.ReadinessAudit) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -64,11 +70,27 @@ func (s *syncSink) RecordContractShadow(a ContractShadowAudit) {
 	}
 }
 
+func (s *syncSink) RecordCompletionReport(a CompletionReportAudit) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if rs, ok := s.inner.(CompletionReportAuditSink); ok {
+		rs.RecordCompletionReport(a)
+	}
+}
+
 func (s *syncSink) RecordOutcomeProgress(sample evidence.OutcomeSample) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if op, ok := s.inner.(OutcomeProgressSink); ok {
 		op.RecordOutcomeProgress(sample)
+	}
+}
+
+func (s *syncSink) RecordMemoryRecall(a MemoryRecallAudit) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if mr, ok := s.inner.(MemoryRecallSink); ok {
+		mr.RecordMemoryRecall(a)
 	}
 }
 
@@ -78,4 +100,10 @@ func (s *syncSink) RecordDelegationAdmission(a DelegationAdmissionAudit) {
 	if da, ok := s.inner.(DelegationAdmissionSink); ok {
 		da.RecordDelegationAdmission(a)
 	}
+}
+
+func (s *syncSink) RecordWorkspaceMutation(m WorkspaceMutation) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	RecordWorkspaceMutation(s.inner, m)
 }

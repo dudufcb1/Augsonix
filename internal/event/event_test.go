@@ -11,7 +11,8 @@ import (
 // Kind constants
 
 func TestKindConstants(t *testing.T) {
-	// Verify the iota sequence is stable and sequential.
+	// Verify the iota sequence is stable and sequential for the original
+	// core kinds. New kinds are appended before KindCount.
 	kinds := []Kind{
 		TurnStarted, Reasoning, Text, Message, ToolDispatch, ToolResult,
 		Usage, Notice, Phase, ApprovalRequest, AskRequest, TurnDone,
@@ -20,6 +21,12 @@ func TestKindConstants(t *testing.T) {
 		if int(k) != i {
 			t.Errorf("Kind %d: got %d", i, int(k))
 		}
+	}
+	if TurnPhase >= KindCount || CompletionSummary >= KindCount {
+		t.Fatal("new kinds must sit before KindCount")
+	}
+	if TurnPhaseName(TurnPhaseWorking) != "working" || TurnPhaseName(TurnPhaseReviewing) != "reviewing" {
+		t.Fatal("turn phase names drifted")
 	}
 }
 
@@ -72,9 +79,10 @@ func TestSyncTreatsTypedNilSinkAsDiscard(t *testing.T) {
 }
 
 type readinessAuditRecorder struct {
-	events   []evidence.ReadinessAudit
-	recovery []ProtocolRecoveryAudit
-	turns    int
+	events    []evidence.ReadinessAudit
+	recovery  []ProtocolRecoveryAudit
+	workspace []WorkspaceMutation
+	turns     int
 }
 
 func (r *readinessAuditRecorder) Emit(Event) {}
@@ -89,11 +97,24 @@ func (r *readinessAuditRecorder) RecordProtocolRecovery(a ProtocolRecoveryAudit)
 
 func (r *readinessAuditRecorder) RecordTurnCompletion() { r.turns++ }
 
+func (r *readinessAuditRecorder) RecordWorkspaceMutation(m WorkspaceMutation) {
+	r.workspace = append(r.workspace, m)
+}
+
 func TestSyncForwardsTurnCompletion(t *testing.T) {
 	rec := &readinessAuditRecorder{}
 	RecordTurnCompletion(Sync(rec))
 	if rec.turns != 1 {
 		t.Fatalf("turn completions = %d, want 1", rec.turns)
+	}
+}
+
+func TestSyncForwardsWorkspaceMutationWithoutUIEvent(t *testing.T) {
+	rec := &readinessAuditRecorder{}
+	sink := Sync(rec)
+	RecordWorkspaceMutation(sink, WorkspaceMutation{ToolName: "write_file", Paths: []string{"a.go"}, Content: true})
+	if len(rec.workspace) != 1 || rec.workspace[0].ToolName != "write_file" || len(rec.workspace[0].Paths) != 1 {
+		t.Fatalf("workspace mutation not forwarded through Sync: %+v", rec.workspace)
 	}
 }
 

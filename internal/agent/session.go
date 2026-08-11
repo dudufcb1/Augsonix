@@ -3,6 +3,8 @@
 package agent
 
 import (
+	"bytes"
+	"strings"
 	"sync"
 
 	"reasonix/internal/provider"
@@ -52,6 +54,10 @@ type Session struct {
 	// cache-prefix change. DrainContentRewriteReasons (run_loop.go, once per
 	// provider request) is the sole consumer.
 	pendingContentReasons []string
+	// persistObserver receives non-blocking post-commit projection hints. It is
+	// deliberately session-local so multiple runtimes cannot steal each other's
+	// observer registration.
+	persistObserver SessionPersistObserver
 }
 
 // NewSession initializes a session with an optional system prompt.
@@ -392,6 +398,32 @@ func (s *Session) NeedsRewriteSave() bool {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	return s.rewriteVersion > s.persistedRewriteVersion
+}
+
+// HasUnsavedChanges reports whether the in-memory transcript contains storage
+// changes that have not been durably recorded at path. It is intentionally
+// conservative when no verified baseline exists: an idle controller must not
+// replace an in-memory conversation with a possibly older disk copy after a
+// bounded lock failure or an interrupted save.
+func (s *Session) HasUnsavedChanges(path string) bool {
+	if s == nil || strings.TrimSpace(path) == "" {
+		return false
+	}
+	msgs, _, rewriteVersion := s.snapshotWithVersion()
+	digest, err := digestSessionMessages(msgs)
+	if err != nil {
+		return true
+	}
+	key := canonicalSessionSavePath(path)
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if !s.persisted.ok || s.persisted.path != key {
+		return true
+	}
+	if s.normalizedDirty || s.eventLogDamaged || rewriteVersion > s.persistedRewriteVersion {
+		return true
+	}
+	return !bytes.Equal(digest[:], s.persisted.digest[:])
 }
 
 // IncrementRewrite bumps the rewrite version by 1.

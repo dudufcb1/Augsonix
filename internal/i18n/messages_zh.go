@@ -13,9 +13,23 @@ var Chinese = Messages{
 	TurnCancelled:       "已取消 — 回到提示符",
 	InterruptedRecovery: "本轮已中断。部分输出会永久保留供查看；只有完整工具调用及结果和有界恢复摘要会进入模型下一轮。继续或回滚前请先检查当前工作区。",
 	RecoveryPaused:      "已暂停自动重试。Reasonix 已停止重复尝试，并保留已完成的工作。发送“继续”即可开始新一轮，也可以补充要求来调整方向。",
-	NoSessionToResume:   "没有可恢复的会话 — 用 `reasonix` 开一个新的",
-	ResumeRequiresTTY:   "--resume 需要交互式终端；用 --continue 直接恢复最近一次",
-	PickSessionLabel:    "恢复哪个会话？",
+	ReceiptVerified:     "没有未经验证的部分",
+	ReceiptGapsHeader:   "未验证:",
+	ReceiptRisksHeader:  "已申报的风险:",
+	ReceiptMore:         "另有 %d 项",
+	ReceiptGapKinds: map[string]string{
+		"unbacked_claim":      "声称过但账本不支持",
+		"unproven_criterion":  "验收项没有证据",
+		"missing_check":       "预期的检查从未通过",
+		"failed_verification": "验证失败",
+		"stale_verification":  "验证早于最后一次改动",
+		"unverified_change":   "改动了但没有任何验证",
+		"unreviewed_change":   "改动后再没看过",
+		"declared_unverified": "自己申报未验证",
+	},
+	NoSessionToResume: "没有可恢复的会话 — 用 `reasonix` 开一个新的",
+	ResumeRequiresTTY: "--resume 需要交互式终端；用 --continue 直接恢复最近一次",
+	PickSessionLabel:  "恢复哪个会话？",
 
 	ResumeBusy:          "请先完成或取消当前这一轮再恢复会话",
 	ResumeBadIndexFmt:   "请选择 1–%d 的会话（用 /resume 查看列表）",
@@ -32,6 +46,12 @@ var Chinese = Messages{
 	ChatThinking:                           "思考中…",
 	ChatThoughtForFmt:                      "思考了 %d 秒",
 	ChatStatusThinkingFmt:                  "%s 思考中… (%d 秒 · Esc 取消)",
+	TurnPhaseWorking:                       "工作中",
+	TurnPhaseChecking:                      "检查中",
+	TurnPhaseVerifying:                     "验证中",
+	TurnPhaseReviewing:                     "复审中",
+	CompletionSummaryBlocked:               "本轮任务受阻，请查看改动详情。",
+	CompletionSummaryNeedsAttention:        "本轮仍有验证或复审缺口。",
 	ChatToolWorkingFmt:                     "%s 运行中 · %d 秒",
 	ChatSubagentPhaseQueued:                "排队中",
 	ChatSubagentPhaseRunning:               "运行中",
@@ -142,9 +162,9 @@ var Chinese = Messages{
 	LanguageHeader:            "语言：",
 	LanguageHint:              "使用 /language <auto|en|zh> 切换",
 	LanguageChangedFmt:        "语言已设为 %s（当前解析为：%s）",
-	CurrencyHeader:            "计价货币：",
+	CurrencyHeader:            "费用展示币种：",
 	CurrencyHint:              "使用 /currency <auto|CNY|USD> 切换",
-	CurrencyChangedFmt:        "计价货币已设为 %s（当前解析为：%s）",
+	CurrencyChangedFmt:        "费用展示币种已设为 %s（当前解析为：%s）",
 	RuntimeRefreshBusy:        "请先完成或取消当前工作，并停止后台任务后再修改此设置",
 	RuntimeRefreshUnavailable: "本会话不支持刷新运行时",
 
@@ -234,6 +254,7 @@ var Chinese = Messages{
 	CmdClear:            "丢弃当前上下文",
 	CmdCls:              "清屏（保留 LLM 上下文）",
 	CmdCompact:          "压缩上下文",
+	CmdContext:          "查看上下文窗口、阈值与上次维护结果",
 	CmdRewind:           "回滚到更早的一轮",
 	CmdTree:             "查看对话分支树",
 	CmdBranch:           "创建对话分支",
@@ -242,7 +263,7 @@ var Chinese = Messages{
 	CmdRename:           "重命名会话",
 	CmdModel:            "切换模型",
 	CmdStatus:           "显示会话状态",
-	CmdWorkMode:         "切换工作模式",
+	CmdWorkMode:         "切换执行设定",
 	CmdDocs:             "搜索与当前版本匹配的内置文档",
 	CmdMemory:           "查看指令、记忆与恢复状态",
 	CmdMigrate:          "重试旧数据迁移",
@@ -257,7 +278,7 @@ var Chinese = Messages{
 	CmdOutputStyle:      "列出输出风格",
 	CmdTheme:            "切换 CLI 主题",
 	CmdLanguage:         "切换 CLI 语言",
-	CmdCurrency:         "切换计价货币",
+	CmdCurrency:         "切换费用展示币种",
 	CmdSkill:            "管理 skills",
 	CmdVerbose:          "切换 thinking 原文显示",
 	CmdReloadCmd:        "重载自定义命令",
@@ -268,6 +289,7 @@ var Chinese = Messages{
 	CmdMouse:            "切换鼠标接管（关闭后由终端原生处理选中/右键）",
 	CmdReasonLang:       "设置可见思考语言",
 	CmdHelp:             "查看命令列表",
+	CmdWeb:              "在 Web UI 中继续当前会话",
 	CmdTodo:             "清除任务清单",
 	CmdQuit:             "退出会话",
 	CmdCopy:             "选择回复复制到剪贴板",
@@ -322,8 +344,7 @@ var Chinese = Messages{
 	GoalPaused:                   "目标已暂停 — /goal resume 可继续",
 	GoalPausedReason:             "用户手动暂停",
 	GoalPausedFmt:                "目标已暂停（%s）— 使用 /goal resume 继续",
-	GoalBudgetExtended:           "目标已恢复 — 追加了一档轮次数",
-	GoalRuntimeFmt:               "运行状态：轮次 %d/%d，token %d，无进展 %d/%d，追加 %d",
+	GoalRuntimeFmt:               "运行状态：轮次 %d · 请求 %d · token %d · 工作时间 %s",
 	GoalRuntimeLastReason:        "最近原因",
 	ModelSwitchUnavailable:       "本会话不支持切换模型",
 	ModelSwitchBusy:              "请先完成或取消当前工作，并停止后台任务后再切换模型",
@@ -335,21 +356,22 @@ var Chinese = Messages{
 	RuntimeReloadQueued:          "已加入重载队列——当前工作完成后执行",
 	RuntimeReloaded:              "运行时已重载",
 	RuntimeReloadedGenerationFmt: "运行时已重载（构建代号 %d）",
-	WorkModeStatusFmt:            "工作 %s",
-	WorkModeListHeaderFmt:        "工作模式（当前：%s）",
-	WorkModeListHint:             "使用 /work-mode economy|balanced|delivery 切换（/profile 为兼容别名）",
+	WorkModeStatusFmt:            "执行设定 %s",
+	WorkModeListHeaderFmt:        "执行设定（当前：%s）",
+	WorkModeListHint:             "使用 /preset light|balanced|delivery 切换（/work-mode、/profile 为兼容别名）",
 	WorkModeEconomyLabel:         "轻量",
 	WorkModeBalancedLabel:        "均衡",
 	WorkModeDeliveryLabel:        "交付",
-	WorkModeEconomyDesc:          "降低 Token 消耗，按需连接可选工具源",
-	WorkModeBalancedDesc:         "完整工具面，由模型判断所需工作量",
-	WorkModeDeliveryDesc:         "强调完整验证和交付，增强 skill 与插件调用",
-	WorkModeUsage:                "用法：/work-mode economy|balanced|delivery",
-	WorkModeSwitchUnavailable:    "本会话不支持切换工作模式",
-	WorkModeSwitchBusy:           "请先完成或取消当前工作，再切换工作模式",
-	WorkModeAlreadyOnFmt:         "当前已经是 %s 工作模式",
-	WorkModeSwitchingFmt:         "正在切换到 %s 工作模式…",
-	WorkModeSwitchedFmt:          "已切换到 %s 工作模式（保留当前对话，但提示词缓存会重新计算）",
+	WorkModeEconomyDesc:          "轻量 · 快速可靠：按需调用能力 · 定向验证",
+	WorkModeBalancedDesc:         "均衡 · 智能适配：自动规划执行 · 风险分级验证",
+	WorkModeDeliveryDesc:         "交付 · 证据闭环：完整验收 · 验证与独立复查",
+	WorkModeUsage:                "用法：/preset light|balanced|delivery",
+	WorkModeSwitchUnavailable:    "本会话不支持切换执行设定",
+	WorkModeSwitchBusy:           "请先完成或取消当前工作，再切换执行设定",
+	WorkModeAlreadyOnFmt:         "当前执行设定已经是 %s",
+	WorkModeSwitchingFmt:         "正在将执行设定切换为 %s…",
+	WorkModeSwitchedFmt:          "执行设定已切换为 %s（后续回合生效，不重建会话）",
+	WorkModeDeprecatedNotice:     "提示：/work-mode 与 /profile 已弃用，请使用 /preset light|balanced|delivery",
 	RewindNone:                   "暂无可回滚的内容",
 	RewindCodeConversation:       "代码 + 对话",
 	RewindConversationOnly:       "仅对话",
@@ -431,6 +453,7 @@ var Chinese = Messages{
 	CustomPromptBaseURL:  "请输入 Base URL",
 	CustomPromptKeyEnv:   "API Key 变量名（直接回车使用默认值，不是模型名）",
 	CustomPromptAPIKey:   "请输入 API Key",
+	CustomPromptWindow:   "上下文窗口(tokens,填得比模型真实窗口小会导致过早压缩)",
 	CustomAddedFmt:       "已添加自定义模型: %s",
 
 	// Anthropic 兼容 provider
@@ -545,6 +568,7 @@ var Chinese = Messages{
   reasonix run [--model NAME] [--max-steps N] [-c|--continue] [--resume PATH] [--copy] [--output-format FORMAT] <task>
   reasonix run --events-jsonl [--model NAME] <task>      输出脱敏结构化事件 JSONL
   reasonix review [--base BRANCH] [--commit SHA] [--model NAME]  AI 代码审查（基于本地 diff）
+  reasonix web [--model NAME] [--addr HOST:PORT] [--no-open]  启动本地 Web UI 并用默认浏览器打开
   reasonix serve [--model NAME] [--addr HOST:PORT] [--auth none|token|password] [--token STR] [--password STR] [--hash-password]  通过 HTTP+SSE 提供服务（支持可选认证）
   reasonix acp [--model NAME]                           通过 stdio 提供 Agent Client Protocol（也可用：reasonix --acp）
   reasonix setup [path]                                 交互式配置向导；生成 reasonix.toml（及 .env）
@@ -575,6 +599,7 @@ var Chinese = Messages{
   reasonix
   reasonix --continue
   reasonix --resume provider-config
+  reasonix web
   reasonix run "把 main.go 里的 TODO 实现掉"
   reasonix run --model mimo-pro "给这个函数补单元测试"
   reasonix -p "总结这个仓库" --output-format json

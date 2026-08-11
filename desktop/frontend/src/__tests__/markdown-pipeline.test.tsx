@@ -9,6 +9,7 @@
 import { createElement, Fragment, type ReactNode } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import ReactMarkdown, { defaultUrlTransform } from "react-markdown";
+import { JSDOM } from "jsdom";
 import { normalizeMath } from "../components/mathNormalize";
 import { createComponents } from "../components/markdownComponents";
 import { reasonixRehypePlugins, reasonixRemarkPlugins } from "../components/markdownRemarkPlugins";
@@ -18,11 +19,13 @@ import {
   estimateHastBytes,
   markdownContentRevision,
   markdownUrlTransform,
+  parseMarkdown,
   parseMarkdownToBlocks,
   parseMarkdownToHast,
   sliceHastBlocks,
   type MarkdownBlock,
 } from "../lib/markdownPipeline";
+import { projectTranscriptSelectableDom } from "../lib/transcriptSelectionDom";
 
 let passed = 0;
 let failed = 0;
@@ -62,6 +65,17 @@ function renderBlocks(blocks: MarkdownBlock[]): string {
         createElement(Fragment, { key: block.key, children: hastBlockToJsx(block, components) as ReactNode })),
     }),
   );
+}
+
+function projectRenderedBlocks(blocks: MarkdownBlock[]): string {
+  const dom = new JSDOM(`<!doctype html><body><div id="root" data-transcript-selectable>${renderBlocks(blocks)}</div></body>`);
+  globalThis.Node = dom.window.Node;
+  globalThis.Element = dom.window.Element;
+  globalThis.HTMLElement = dom.window.HTMLElement;
+  const root = dom.window.document.getElementById("root") as HTMLElement;
+  const projected = projectTranscriptSelectableDom(root).text;
+  dom.window.close();
+  return projected;
 }
 
 console.log("\nmarkdown pipeline parity");
@@ -143,6 +157,28 @@ for (const [name, text] of Object.entries(fixtures)) {
   }
 }
 
+// Authority-form UNC links use the same strict local-file allowlist in the
+// worker pipeline as canonical file:/// links do.
+{
+  const unc = "file://nas/share/report.md";
+  eq(markdownUrlTransform(unc), unc, "authority-form UNC survives pipeline URL sanitization");
+  const root = parseMarkdownToHast(`[report](${unc})`);
+  const html = renderBlocks([{ key: "unc", children: root.children }]);
+  ok(html.includes(`href="${unc}"`), "authority-form UNC href survives HAST rendering");
+}
+
+// Windows device namespaces and alternate data streams must not be restored
+// after react-markdown's default URL sanitizer rejects their file: scheme.
+for (const unsafe of [
+  "file://./PhysicalDrive0",
+  "file:////?/C:/Windows",
+  "file:///C:/safe.txt:payload",
+  "file:///tmp/report.md?download=1",
+  "file:///tmp/report.md#section",
+]) {
+  eq(markdownUrlTransform(unsafe), "", `unsafe local URL is blanked: ${unsafe}`);
+}
+
 // Content revision + byte weight.
 {
   eq(markdownContentRevision("alpha") === markdownContentRevision("alpha"), true, "content revision is deterministic");
@@ -152,6 +188,47 @@ for (const [name, text] of Object.entries(fixtures)) {
   ok(bytes > 0 && bytes < 100_000, "hast byte estimate is positive and bounded");
   const bigBlocks = parseMarkdownToBlocks(bigCode);
   ok(estimateHastBytes(bigBlocks) > bytes, "hast byte estimate grows with content");
+}
+
+console.log("\nmarkdown selection projection");
+
+{
+  const result = parseMarkdown([
+    "# 标题 😀",
+    "",
+    "段落 [链接文字](https://example.com) 与 $x^2$。",
+    "",
+    "内联 **粗体** *斜体*。",
+    "",
+    "- 第一项",
+    "- 第二项",
+    "",
+    "```ts",
+    "const value = 1;",
+    "```",
+    "",
+    "| 名称 | 值 |",
+    "| --- | --- |",
+    "| 一 | 1 |",
+  ].join("\n"));
+  eq(
+    result.selectionText,
+    "标题 😀\n段落 链接文字 与 $x^2$。\n内联 粗体 斜体。\n第一项\n第二项\nconst value = 1;\n名称\t值\n一\t1",
+    "selection projection preserves readable structure, code, tables, CJK, emoji and LaTeX",
+  );
+  eq(
+    result.selectionText,
+    projectRenderedBlocks(result.blocks),
+    "selection projection uses the same UTF-16 text as the rendered DOM adapter",
+  );
+  eq(result.selectionRevision, markdownContentRevision(result.selectionText), "selection revision fingerprints projected UTF-16 text");
+}
+
+{
+  const rows = Array.from({ length: 52 }, (_, index) => `| row-${index} | ${index} |`).join("\n");
+  const result = parseMarkdown(`| name | value |\n| --- | --- |\n${rows}`);
+  ok(result.blocks.some((block) => block.virtualTable), "large plain table uses the virtual table representation");
+  ok(result.selectionText.includes("row-51\t51"), "virtual table projection includes rows that never mount in the DOM");
 }
 
 console.log(`\n${passed} passed, ${failed} failed, ${passed + failed} total`);
