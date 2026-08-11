@@ -62,6 +62,7 @@ type Config struct {
 	Skills           SkillsConfig        `toml:"skills"`
 	Statusline       StatuslineConfig    `toml:"statusline"`
 	LSP              LSPConfig           `toml:"lsp"`
+	CodeSearch       CodeSearchConfig    `toml:"codesearch"`
 	Bot              BotConfig           `toml:"bot"`
 	Serve            ServeConfig         `toml:"serve"`
 	Secrets          SecretsConfig       `toml:"secrets"`
@@ -1881,15 +1882,14 @@ func Default() *Config {
 		// resolves to allow) while `reasonix` prompts before writers. Users add
 		// deny/allow rules to harden or quiet specific tools.
 		Permissions: PermissionsConfig{Mode: "ask"},
-		// Sandbox uses platform defaults: macOS/Linux jail bash by default;
-		// Windows has no OS-level Bash sandbox and always forces bash off.
-		// Network=true here so an absent [sandbox] in a user's file keeps egress
-		// (zero value would wrongly deny it).
+		// Sandbox uses platform defaults: macOS/Linux jail bash, Windows has no
+		// OS-level Bash sandbox and forces it off. Network=true so an absent
+		// [sandbox] keeps egress (the zero value would wrongly deny it).
 		Sandbox: SandboxConfig{Network: true},
-		// LSP tools on by default, but dormant until a language server is on PATH;
-		// a missing server yields an install hint rather than an error.
-		LSP:     LSPConfig{Enabled: true},
-		Network: NetworkConfig{ProxyMode: netclient.ModeAuto},
+		// LSP on by default but dormant: no server on PATH yields an install hint.
+		LSP:        LSPConfig{Enabled: true},
+		CodeSearch: DefaultCodeSearch(),
+		Network:    NetworkConfig{ProxyMode: netclient.ModeAuto},
 		Bot: BotConfig{
 			ToolApprovalMode:   "ask",
 			MaxSteps:           25,
