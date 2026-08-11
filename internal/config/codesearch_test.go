@@ -1,6 +1,9 @@
 package config
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 func TestDefaultCodeSearchIsDisabled(t *testing.T) {
 	// Indexar gasta la cuota del usuario en su proveedor de embeddings, así que
@@ -78,5 +81,34 @@ func TestConfigDefaultIncludesCodeSearch(t *testing.T) {
 	// archivo generado la muestre y sea descubrible.
 	if Default().CodeSearch.Model == "" {
 		t.Error("la configuración por defecto no trae la sección codesearch")
+	}
+}
+
+func TestWarningsCatchTypedValues(t *testing.T) {
+	// El caso real: alguien escribe grep_friction = "true" creyendo que activa
+	// la fricción. Normalized lo cae a "off" para que el índice siga usable,
+	// pero callarse ahí deja al usuario creyendo que configuró algo que no.
+	got := CodeSearchConfig{GrepFriction: "true", Prompt: "siempre", Backend: "mongo"}.Warnings()
+	if len(got) != 3 {
+		t.Fatalf("se avisó de %d valores inválidos, esperaba 3: %v", len(got), got)
+	}
+	joined := strings.Join(got, " | ")
+	for _, want := range []string{"grep_friction", "prompt_mode", "backend", "off", "tool", "local"} {
+		if !strings.Contains(joined, want) {
+			t.Errorf("el aviso no menciona %q: %s", want, joined)
+		}
+	}
+}
+
+func TestWarningsStayQuietForValidConfig(t *testing.T) {
+	// Una configuración correcta, o con campos vacíos que toman su default, no
+	// debe generar ruido en cada arranque.
+	for _, c := range []CodeSearchConfig{
+		{},
+		{Backend: BackendPostgres, Prompt: PromptModeMandatory, GrepFriction: FrictionStrict},
+	} {
+		if got := c.Warnings(); len(got) != 0 {
+			t.Errorf("configuración válida avisó %v", got)
+		}
 	}
 }

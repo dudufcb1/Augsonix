@@ -35,12 +35,46 @@ var skipDirs = map[string]bool{
 	"vendor": true, "venv": true,
 }
 
+// generatedSuffixes son archivos que nadie busca por significado: lockfiles,
+// bundles minificados y salida de generadores. Se trocean en decenas de
+// fragmentos cada uno, así que cuestan cuota y ensucian los resultados.
+var generatedSuffixes = []string{
+	".min.js", ".min.css", ".map",
+	"-lock.json", ".lock",
+	".generated.ts", ".generated.js", ".generated.go", "_generated.go", ".gen.go",
+	".pb.go",
+}
+
+// generatedNames son nombres completos que siempre son generados.
+var generatedNames = map[string]bool{
+	"package-lock.json": true, "yarn.lock": true, "pnpm-lock.yaml": true,
+	"composer.lock": true, "go.sum": true, "cargo.lock": true, "poetry.lock": true,
+}
+
 // Indexable reporta si un archivo entra al índice por su nombre y tamaño.
 func Indexable(path string, size int64) bool {
 	if size <= 0 || size > maxIndexableFileSize {
 		return false
 	}
-	return indexableExtensions[strings.ToLower(filepath.Ext(path))]
+	if !indexableExtensions[strings.ToLower(filepath.Ext(path))] {
+		return false
+	}
+	return !isGenerated(path)
+}
+
+// isGenerated reconoce salida de herramientas por su nombre. Se mira el nombre
+// y no el contenido porque decidirlo leyendo el archivo costaría abrirlos todos.
+func isGenerated(path string) bool {
+	name := strings.ToLower(filepath.Base(path))
+	if generatedNames[name] {
+		return true
+	}
+	for _, suffix := range generatedSuffixes {
+		if strings.HasSuffix(name, suffix) {
+			return true
+		}
+	}
+	return false
 }
 
 // matcher decide qué se salta durante el recorrido: carpetas ocultas, las de

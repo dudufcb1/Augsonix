@@ -1,6 +1,9 @@
 package config
 
-import "strings"
+import (
+	"fmt"
+	"strings"
+)
 
 // CodeSearchPromptMode decide cuánta instrucción sobre la búsqueda semántica
 // entra al prompt del sistema. Existe como perilla porque el modo correcto se
@@ -101,8 +104,33 @@ func DefaultCodeSearch() CodeSearchConfig {
 	}
 }
 
+// Warnings enumera los valores que no se reconocieron. Normalized los corrige
+// en silencio para que el índice siga usable, y callarse ahí es peligroso: un
+// grep_friction = "true" deja la función apagada mientras el usuario cree que
+// la activó, y nada se lo dice.
+func (c CodeSearchConfig) Warnings() []string {
+	var out []string
+	switch c.Backend {
+	case "", BackendLocal, BackendPostgres:
+	default:
+		out = append(out, fmt.Sprintf("[codesearch] backend %q no existe; usando %q (válidos: local, postgres)", c.Backend, BackendLocal))
+	}
+	switch c.Prompt {
+	case "", PromptModeTool, PromptModeEncourage, PromptModeMandatory:
+	default:
+		out = append(out, fmt.Sprintf("[codesearch] prompt_mode %q no existe; usando %q (válidos: tool, encourage, mandatory)", c.Prompt, PromptModeTool))
+	}
+	switch c.GrepFriction {
+	case "", FrictionOff, FrictionSemi, FrictionStrict:
+	default:
+		out = append(out, fmt.Sprintf("[codesearch] grep_friction %q no existe; usando %q (válidos: off, semi, strict)", c.GrepFriction, FrictionOff))
+	}
+	return out
+}
+
 // Normalized rellena los huecos con los valores por defecto y corrige lo que no
 // reconoce, para que un archivo a medio escribir no deje el índice inservible.
+// Lo corregido se reporta aparte con Warnings.
 func (c CodeSearchConfig) Normalized() CodeSearchConfig {
 	d := DefaultCodeSearch()
 	if strings.TrimSpace(c.Model) == "" {

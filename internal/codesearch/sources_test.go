@@ -69,3 +69,39 @@ func TestMatcherHonorsGitignore(t *testing.T) {
 		t.Error("un archivo normal se saltó por el .gitignore")
 	}
 }
+
+func TestIndexableSkipsGeneratedFiles(t *testing.T) {
+	// Un package-lock.json ocupaba 55 fragmentos en un proyecto real: cuota
+	// gastada en algo que nadie busca por significado, y ruido en los
+	// resultados de todas las demás consultas.
+	for _, p := range []string{
+		"frontend/package-lock.json",
+		"frontend/src/types/api.generated.ts",
+		"static/app.min.js",
+		"static/app.min.css",
+		"internal/api/service.pb.go",
+		"internal/api/types_generated.go",
+		"go.sum",
+		"yarn.lock",
+	} {
+		if Indexable(p, 4000) {
+			t.Errorf("se indexó un archivo generado: %s", p)
+		}
+	}
+}
+
+func TestIndexableKeepsHandWrittenFiles(t *testing.T) {
+	// El filtro va por nombre, así que no puede llevarse por delante código
+	// escrito a mano que casualmente mencione esas palabras.
+	for _, p := range []string{
+		"package.json",
+		"internal/generator/generator.go",
+		"src/lib/mapper.ts",
+		"internal/codesearch/sources.go",
+		"docs/locking.md",
+	} {
+		if !Indexable(p, 4000) {
+			t.Errorf("se descartó código escrito a mano: %s", p)
+		}
+	}
+}

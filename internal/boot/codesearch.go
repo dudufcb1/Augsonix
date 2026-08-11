@@ -30,6 +30,9 @@ func addCodeSearch(ctx context.Context, reg *tool.Registry, root string, cfg con
 	if !cfg.Enabled || root == "" {
 		return nil
 	}
+	for _, w := range cfg.Warnings() {
+		fmt.Fprintln(stderr, w)
+	}
 	cfg = cfg.Normalized()
 	key := os.Getenv(cfg.APIKeyEnv)
 	if key == "" {

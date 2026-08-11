@@ -259,14 +259,16 @@ stalled_warning_seconds = 900   # warn once per background job after this many q
 
 # Búsqueda semántica sobre el código del workspace. Apagada por defecto porque
 # indexar consume la cuota de tu proveedor de embeddings.
+# Se administra con: reasonix codesearch status | list | clear
 [codesearch]
 enabled = false
-# Modelo de embeddings. Cambiarlo invalida el índice: vectores de modelos
-# distintos no son comparables.
+
+# Cambiar el modelo o las dimensiones INVALIDA el índice: vectores de modelos
+# distintos no son comparables y hay que reindexar todo.
 model = "voyage-code-4"
-# Debe ser una de las que acepta el modelo (voyage-code-4: 256, 512, 1024, 2048).
-# Con 2048 el índice HNSW de pgvector solo funciona vía el cast a halfvec, que
-# este backend ya hace.
+# Válidas para voyage-code-4: 256, 512, 1024, 2048. Cuesta lo mismo cualquiera,
+# porque el precio va por token de entrada. Se puede bajar después sin
+# reindexar (Matryoshka), pero subir obliga a rehacerlo.
 dimensions = 2048
 # Reordena los candidatos leyendo consulta y código juntos, que es algo que un
 # embedding no puede hacer. Vacío desactiva el rerank y deja el orden del coseno.
@@ -275,26 +277,31 @@ rerank_model = "rerank-2.5"
 api_key_env = "VOYAGE_API_KEY"
 # Endpoint alterno compatible con la API del proveedor. Vacío usa el suyo.
 base_url = ""
-# "local" guarda el índice en el workspace, sin infraestructura pero sin viajar a
-# otra máquina. "postgres" lo comparte entre máquinas vía pgvector.
+
+# "local" guarda el índice en el estado del usuario, sin infraestructura pero
+# sin viajar a otra máquina. "postgres" lo comparte vía pgvector.
 backend = "local"
 postgres_url_env = "CODESEARCH_POSTGRES_URL"
-# Sincroniza al abrir el workspace y mantiene el índice al día mientras trabajas.
-auto_index = true
-watch = true
+
+auto_index = true   # sincroniza al abrir el workspace, en segundo plano
+watch = true        # lo mantiene al día mientras trabajas
+
 # Cuánta instrucción sobre la búsqueda entra al prompt del sistema:
-#   "tool"      — nada; solo la descripción de la herramienta (0 tokens fijos)
+#   "tool"      — nada; solo la descripción de la herramienta (0 tokens fijos).
+#                 El modelo decide, y en la práctica suele quedarse con grep.
 #   "encourage" — sugiere preferirla sobre grep (~32 tokens)
-#   "mandatory" — exige consultarla antes de editar (~64 tokens)
+#   "mandatory" — exige consultarla antes de editar, pidiendo todos los
+#                 símbolos en una sola llamada (~64 tokens)
 prompt_mode = "tool"
-# Qué pasa cuando el modelo encadena búsquedas de texto sin consultar el índice:
+
+# Qué pasa cuando el modelo encadena búsquedas de texto sin consultar el índice.
+# El contador se reinicia con cada búsqueda semántica, así que es un incentivo
+# y no un castigo. Se desactiva sola si el índice no puede responder.
 #   "off"    — nada
-#   "semi"   — le pide declarar no_semantic_needed=true para seguir con grep
+#   "semi"   — le pide repetir el grep con no_semantic_needed=true
 #   "strict" — corta y lo manda a code_search
-# Se desactiva sola si el índice no puede responder.
 grep_friction = "off"
 grep_friction_limit = 3
-# Se administra con: reasonix codesearch status | list | clear
 
 [serve]
 # Authentication for the HTTP serve frontend (reasonix serve).
