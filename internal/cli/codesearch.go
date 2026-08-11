@@ -102,11 +102,17 @@ func codeSearchStatus(cfg config.CodeSearchConfig, root string) int {
 
 // codeSearchQuick responde si hay índice leyendo solo el estado en disco. Sirve
 // para un enganche de arranque, donde abrir la base costaría más de un segundo
-// en cada sesión y la mayoría de las veces solo para decir que no hay nada.
-// Sale con 1 cuando no hay índice, para poder encadenarlo en un script.
+// en cada sesión y casi siempre solo para decir que no hay nada. Sale con 1 sin
+// índice y con 2 en una carpeta contenedora.
 func codeSearchQuick(cfg config.CodeSearchConfig, root string) int {
 	if !cfg.Enabled {
 		return 1
+	}
+	// El 2 distingue "aquí no se indexa a propósito" de "aquí no hay índice
+	// todavía", para que un enganche pueda actuar distinto en cada caso.
+	if cfg.IsContainer(root) {
+		fmt.Printf("%s\tcontenedor\n", filepath.Base(root))
+		return 2
 	}
 	ws := codesearch.IdentifyWorkspaceIn(root, cfg.ContainerPaths())
 	state, err := codesearch.LoadState(filepath.Join(config.CodeSearchIndexDir(), ws.ID))
