@@ -370,7 +370,9 @@ func (h *parentClaimProbeHooks) PreToolUse(context.Context, string, json.RawMess
 	}
 	return false, ""
 }
-func (*parentClaimProbeHooks) PostToolUse(context.Context, string, json.RawMessage, string) []string { return nil }
+func (*parentClaimProbeHooks) PostToolUse(context.Context, string, json.RawMessage, string) []string {
+	return nil
+}
 func (*parentClaimProbeHooks) PostToolUseFailure(context.Context, string, json.RawMessage, string, error) {
 }
 func (*parentClaimProbeHooks) PostLLMCall(_ context.Context, reasoning string, _ int) string {
