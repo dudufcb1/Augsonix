@@ -8,10 +8,10 @@ import (
 	"reasonix/internal/i18n"
 )
 
-// toolOutputPreviewLines es cuánto se muestra de un resultado antes de cortar.
-// Suficiente para ver qué encontró la herramienta sin tapar la conversación:
-// el resultado completo ya lo recibió el modelo.
-const toolOutputPreviewLines = 12
+// toolOutputDefaultLines es cuánto se muestra de un resultado cuando no se
+// configuró otra cosa. Cada línea se recorta al ancho de la terminal, así que
+// subirlo alarga el historial pero nunca lo desalinea.
+const toolOutputDefaultLines = 40
 
 // toolOutputSilent son las herramientas que no vale la pena mostrar. bash tiene
 // su propio bloque en vivo con Ctrl+B, y las de escritura ya se ven como diff.
@@ -25,12 +25,15 @@ var toolOutputSilent = map[string]bool{
 // toolOutputBlock arma el bloque que muestra lo que devolvió una herramienta,
 // o nil si no hay nada que enseñar. Sirve para ver qué está leyendo el agente y
 // juzgar si le sirvió, que es lo que un resultado silencioso no deja hacer.
-func toolOutputBlock(name, output string, width int) []string {
+func toolOutputBlock(name, output string, width, maxLines int) []string {
 	if toolOutputSilent[name] || strings.TrimSpace(output) == "" {
 		return nil
 	}
+	if maxLines <= 0 {
+		maxLines = toolOutputDefaultLines
+	}
 	lines := strings.Split(strings.TrimRight(output, "\n"), "\n")
-	shown := min(len(lines), toolOutputPreviewLines)
+	shown := min(len(lines), maxLines)
 
 	out := make([]string, 0, shown+1)
 	for _, ln := range lines[:shown] {
@@ -49,7 +52,7 @@ func (m *chatTUI) commitToolOutput(tc event.Tool) {
 	if !m.showToolOutput || tc.Err != "" {
 		return
 	}
-	block := toolOutputBlock(tc.Name, tc.Output, m.width)
+	block := toolOutputBlock(tc.Name, tc.Output, m.width, m.toolOutputLines)
 	if block == nil {
 		return
 	}

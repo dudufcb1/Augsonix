@@ -622,9 +622,8 @@ func runAgent(args []string, version string) int {
 			fmt.Fprintln(os.Stderr, i18n.M.ErrorPrefix, err)
 			return 1
 		}
-		// Keep structured (json/stream-json) and --print stdout a single
-		// machine-readable payload: the human copy notice goes to stderr there.
-		// Plain text runs keep it on stdout, where callers scrape the copied path.
+		// Structured (json/stream-json) and --print stdout stay a single machine
+		// payload: the copy notice goes to stderr there, stdout in plain runs.
 		if format == runOutputText && !*printOnly {
 			fmt.Printf("continuing in a session copy: %s\n", copied)
 		} else {
@@ -1261,7 +1260,8 @@ func chatREPL(args []string, version string) int {
 		m.statuslineCmd = cfg.Statusline.Command // custom status-line command, "" = built-in row
 		m.showReasoning = cfg.UI.ShowReasoning   // /verbose persistence: start with config default
 		m.showToolOutput = cfg.UI.ShowToolOutput // Ctrl+T persistence
-		m.showTurnUsage = cfg.UI.ShowTurnUsage   // retain usage accounting even when transcript receipts are hidden
+		m.toolOutputLines = cfg.UI.ToolOutputLines
+		m.showTurnUsage = cfg.UI.ShowTurnUsage // retain usage accounting even when transcript receipts are hidden
 		m.cfg = cfg
 	}
 

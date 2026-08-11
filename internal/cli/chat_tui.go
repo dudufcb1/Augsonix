@@ -140,12 +140,13 @@ type chatTUI struct {
 	// finalize — at a tool/usage boundary or turn end — not previewed live, so
 	// the bottom region stays a stable height. pendingCommit queues finalized
 	// lines so a single Update emits exactly one ordered tea.Println.
-	reasoning      *strings.Builder
-	pending        *strings.Builder
-	pendingCommit  *[]string
-	showReasoning  bool // Ctrl+O / /verbose: show raw thinking text in the CLI
-	showToolOutput bool // Ctrl+T: mostrar lo que devolvieron las tools de lectura
-	cfg            *config.Config
+	reasoning       *strings.Builder
+	pending         *strings.Builder
+	pendingCommit   *[]string
+	showReasoning   bool // Ctrl+O / /verbose: show raw thinking text in the CLI
+	showToolOutput  bool // Ctrl+T: mostrar lo que devolvieron las tools de lectura
+	toolOutputLines int  // cuántas líneas por resultado; 0 = el default
+	cfg             *config.Config
 	// reasoningLineIdx is the transcript index of the live "▎ thinking…" marker
 	// while a reasoning block streams; it's rewritten to "▎ thought for Ns" when
 	// the block closes. -1 when no block is open. transcriptDirty forces a
