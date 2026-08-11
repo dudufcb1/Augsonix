@@ -9,6 +9,7 @@ import (
 	"math"
 	"net/http"
 	"strings"
+	"sync/atomic"
 	"time"
 )
 
@@ -26,6 +27,10 @@ const (
 // Voyage habla con la API de Voyage AI para embeber y reordenar. Un solo tipo
 // cubre ambas cosas porque comparten host, credencial y política de reintentos.
 type Voyage struct {
+	// tokens acumula lo que el proveedor reporta haber cobrado, para poder
+	// decir cuánto costó un indexado en vez de estimarlo.
+	tokens atomic.Int64
+
 	APIKey      string
 	EmbedModel  string
 	RerankModel string
@@ -75,6 +80,7 @@ func (v *Voyage) Embed(ctx context.Context, texts []string, kind InputKind) ([][
 		if err := v.post(ctx, "/embeddings", body, &resp); err != nil {
 			return nil, err
 		}
+		v.tokens.Add(int64(resp.Usage.TotalTokens))
 		if len(resp.Data) != len(batch) {
 			return nil, fmt.Errorf("voyage: se pidieron %d embeddings y llegaron %d", len(batch), len(resp.Data))
 		}
@@ -266,3 +272,6 @@ var (
 	_ Embedder = (*Voyage)(nil)
 	_ Reranker = (*Voyage)(nil)
 )
+
+// TokensUsed son los tokens que el proveedor reportó en esta sesión.
+func (v *Voyage) TokensUsed() int64 { return v.tokens.Load() }

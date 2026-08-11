@@ -18,7 +18,7 @@ import (
 // guardado, ni de rehacerlo cuando queda a medias.
 func codeSearchCommand(args []string) int {
 	if len(args) == 0 {
-		fmt.Fprintln(os.Stderr, "usage: reasonix codesearch <status|clear|list>")
+		fmt.Fprintln(os.Stderr, "usage: reasonix codesearch <status|list|reindex [--force]|clear>")
 		return 2
 	}
 	cfg, root, err := codeSearchContext()
@@ -29,6 +29,8 @@ func codeSearchCommand(args []string) int {
 	switch args[0] {
 	case "status":
 		return codeSearchStatus(cfg, root)
+	case "reindex":
+		return codeSearchReindex(cfg, root, hasFlag(args[1:], "--force"))
 	case "clear":
 		return codeSearchClear(cfg, root)
 	case "list":
@@ -207,4 +209,13 @@ func dirSizeHuman(dir string) string {
 	default:
 		return strings.TrimSpace(fmt.Sprintf("%d B", total))
 	}
+}
+
+func hasFlag(args []string, name string) bool {
+	for _, a := range args {
+		if a == name {
+			return true
+		}
+	}
+	return false
 }

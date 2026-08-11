@@ -40,7 +40,7 @@ func addCodeSearch(ctx context.Context, reg *tool.Registry, root string, cfg con
 		return nil
 	}
 
-	ix, err := openCodeSearchIndex(ctx, root, cfg, key, proxy)
+	ix, err := OpenCodeSearchIndex(ctx, root, cfg, key, proxy)
 	if err != nil {
 		fmt.Fprintf(stderr, "code_search disabled: %v\n", err)
 		return nil
@@ -60,9 +60,9 @@ func addCodeSearch(ctx context.Context, reg *tool.Registry, root string, cfg con
 	return ix
 }
 
-// openCodeSearchIndex arma el índice desde la configuración: cliente del
+// OpenCodeSearchIndex arma el índice desde la configuración: cliente del
 // proveedor, almacén de vectores y estado incremental.
-func openCodeSearchIndex(ctx context.Context, root string, cfg config.CodeSearchConfig, apiKey string, proxy netclient.ProxySpec) (*codesearch.Index, error) {
+func OpenCodeSearchIndex(ctx context.Context, root string, cfg config.CodeSearchConfig, apiKey string, proxy netclient.ProxySpec) (*codesearch.Index, error) {
 	client, err := netclient.NewHTTPClient(proxy, netclient.TransportOptions{})
 	if err != nil {
 		client = &http.Client{}

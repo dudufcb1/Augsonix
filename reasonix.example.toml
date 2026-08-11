@@ -259,7 +259,7 @@ stalled_warning_seconds = 900   # warn once per background job after this many q
 
 # Búsqueda semántica sobre el código del workspace. Apagada por defecto porque
 # indexar consume la cuota de tu proveedor de embeddings.
-# Se administra con: reasonix codesearch status | list | clear
+# Se administra con: reasonix codesearch status | list | reindex | clear
 [codesearch]
 enabled = false
 

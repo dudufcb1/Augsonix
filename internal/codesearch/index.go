@@ -239,3 +239,7 @@ func (ix *Index) fail(err error) {
 	}
 	ix.progress.set(func(s *Status) { s.Phase, s.Err = phase, err })
 }
+
+// Embedder expone el proveedor para que un frontend pueda preguntarle cuánto
+// consumió, sin que el índice tenga que llevar esa cuenta él mismo.
+func (ix *Index) Embedder() Embedder { return ix.embedder }
