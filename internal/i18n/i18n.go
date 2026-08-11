@@ -84,6 +84,9 @@ type Messages struct {
 	ChatStatusContextLabel                 string
 	ChatStatusCompactLabel                 string
 	ChatStatusJobsLabel                    string
+	ChatStatusIndexLabel                   string
+	ChatStatusIndexStarting                string
+	ChatStatusIndexFailed                  string
 	ChatStatusBalanceLabel                 string
 	ChatStatusCacheNowFmt                  string // cache status tag, "%s" = latest-turn hit rate with percent sign
 	ChatStatusCacheAvgFmt                  string // cache status tag, "%s" = session-average hit rate with percent sign

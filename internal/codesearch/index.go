@@ -15,6 +15,7 @@ type Index struct {
 	state    *State
 	embedder Embedder
 	reranker Reranker
+	progress progress
 }
 
 // Progress informa el avance de un escaneo, para que un frontend pueda
@@ -47,15 +48,21 @@ func NewIndex(root string, store VectorStore, state *State, embedder Embedder, r
 // archivos nuevos o modificados, y saca los que desaparecieron. onProgress
 // puede ser nil.
 func (ix *Index) Sync(ctx context.Context, onProgress func(Progress)) (Stats, error) {
+	first := ix.state.Len() == 0
+	ix.progress.set(func(s *Status) { *s = Status{Phase: PhaseScanning, First: first} })
+
 	files, err := ix.collect(ctx)
 	if err != nil {
+		ix.fail(err)
 		return Stats{}, err
 	}
+	ix.progress.set(func(s *Status) { s.Total = len(files) })
 
 	var st Stats
 	seen := make(map[string]bool, len(files))
 	for i, f := range files {
 		if err := ctx.Err(); err != nil {
+			ix.fail(err)
 			return st, err
 		}
 		seen[f] = true
@@ -70,6 +77,14 @@ func (ix *Index) Sync(ctx context.Context, onProgress func(Progress)) (Stats, er
 		default:
 			st.Unchanged++
 		}
+		ix.progress.set(func(s *Status) {
+			s.Done, s.Embedded = i+1, st.Embedded
+			// Solo cuenta como indexado cuando de verdad se esta embebiendo;
+			// un escaneo sin cambios no debe alarmar con una barra de progreso.
+			if st.Embedded > 0 {
+				s.Phase = PhaseIndexing
+			}
+		})
 		if onProgress != nil {
 			onProgress(Progress{File: f, Done: i + 1, Total: len(files), Embedded: st.Embedded, Unchanged: st.Unchanged})
 		}
@@ -86,9 +101,17 @@ func (ix *Index) Sync(ctx context.Context, onProgress func(Progress)) (Stats, er
 
 	_, st.Chunks = ix.store.Stats()
 	if err := ix.store.Save(); err != nil {
+		ix.fail(err)
 		return st, err
 	}
-	return st, ix.state.Save()
+	if err := ix.state.Save(); err != nil {
+		ix.fail(err)
+		return st, err
+	}
+	ix.progress.set(func(s *Status) {
+		s.Phase, s.Chunks, s.Err = PhaseReady, st.Chunks, nil
+	})
+	return st, nil
 }
 
 // syncFile reindexa un archivo si su contenido cambió. Devuelve si hubo que
@@ -183,4 +206,10 @@ func IndexDir(root string) string {
 func (ix *Index) Ready() (int, bool) {
 	_, chunks := ix.store.Stats()
 	return chunks, chunks > 0
+}
+
+// fail deja el error a la vista en vez de que el índice se quede callado y la
+// interfaz muestre un escaneo que nunca termina.
+func (ix *Index) fail(err error) {
+	ix.progress.set(func(s *Status) { s.Phase, s.Err = PhaseFailed, err })
 }

@@ -69,9 +69,8 @@ var ErrTurnRunning = errors.New("turn already running")
 // superseded by a successful rebuild.
 var ErrRuntimeDraining = errors.New("runtime is draining after rebuild")
 
-// errTurnRunningRotation and errRotationInProgress are returned by the
-// session-rotation gate (beginRotation) when a rotation cannot proceed: a turn
-// is in flight, or another rotation already holds the gate.
+// Returned by the session-rotation gate (beginRotation) when a rotation cannot
+// proceed: a turn is in flight, or another rotation already holds the gate.
 var (
 	errTurnRunningRotation = errors.New("cannot start a new session while a turn is running")
 	errRotationInProgress  = errors.New("cannot start a new session while another session change is in progress")
@@ -86,6 +85,7 @@ var errNoSessionPath = errors.New("session has content but no session path; conv
 // Controller drives one chat session. Construct with New; drive with the command
 // methods; observe through the Sink passed in Options.
 type Controller struct {
+	indexStatus  indexStatusSource
 	runner       agent.Runner
 	executor     *agent.Agent
 	guardianSess *guardian.Session // nil when guardian is disabled

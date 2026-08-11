@@ -332,9 +332,8 @@ func build(ctx context.Context, opts Options) (*BuildResult, error) {
 	if err != nil {
 		return nil, fmt.Errorf("boot: %w", err)
 	}
-	// Until the RuntimeSet takes ownership at snapshot assembly, every error
-	// path between here and there must retire the preflighted sidecars — no
-	// process may outlive a failed build.
+	// Until the RuntimeSet takes ownership at snapshot assembly, every error path
+	// must retire the preflighted sidecars: no process outlives a failed build.
 	pendingMgr := extensionMgr
 	defer func() {
 		if pendingMgr != nil {
@@ -686,7 +685,7 @@ func build(ctx context.Context, opts Options) (*BuildResult, error) {
 	if !tokenEconomy || len(cfg.Tools.Enabled) == 0 || len(enabledBuiltins) > 0 {
 		addBuiltins(reg, enabledBuiltins, writeRoots, bashSpec, bashTimeout, searchSpec, stderr, launchWD, proxySpec, forbidReadRoots, readPathResolver, sessionGuard, managedConfig, opts.FileOverlay, opts.TerminalRunner, sessionTemp, fileWriteReceipt)
 	}
-	addCodeSearch(ctx, reg, launchWD, cfg.CodeSearch, proxySpec, stderr)
+	codeIx := addCodeSearch(ctx, reg, launchWD, cfg.CodeSearch, proxySpec, stderr)
 	// Use the caller-supplied shared host when set, so controllers for the same
 	// workspace root reuse running MCP processes (e.g. one CodeGraph daemon
 	// instead of one per tab). Otherwise construct a private host per controller.
@@ -2040,6 +2039,7 @@ func build(ctx context.Context, opts Options) (*BuildResult, error) {
 	// on, host/ui/* publishes ride ctrl.EmitExtensionEvent and blocking prompts
 	// ride ctrl.Ask, exactly as if the hub had been built after control.New.
 	ctrlRef.Store(ctrl)
+	publishCodeSearchStatus(ctrl, codeIx)
 	close(controllerReady)
 	// Share the recovery checkpoint with task/fleet sub-agents so background
 	// writers observe the same failure state as the root agent.

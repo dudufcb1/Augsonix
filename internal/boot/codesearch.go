@@ -11,6 +11,7 @@ import (
 
 	"reasonix/internal/codesearch"
 	"reasonix/internal/config"
+	"reasonix/internal/control"
 	"reasonix/internal/netclient"
 	"reasonix/internal/tool"
 	"reasonix/internal/tool/builtin"
@@ -116,4 +117,19 @@ func indexDirForTest(root string) string {
 // construir el índice, para decidir la guía del prompt antes del ensamblaje.
 func codeSearchAvailable(cfg config.CodeSearchConfig, root string) bool {
 	return cfg.Enabled && root != "" && os.Getenv(cfg.Normalized().APIKeyEnv) != ""
+}
+
+// publishCodeSearchStatus conecta el avance del índice al controlador, para que
+// los tres frontends puedan pintarlo sin conocer el motor.
+func publishCodeSearchStatus(ctrl *control.Controller, ix *codesearch.Index) {
+	if ctrl == nil || ix == nil {
+		return
+	}
+	ctrl.SetIndexStatusFunc(func() control.IndexStatus {
+		s := ix.Status()
+		return control.IndexStatus{
+			Phase: string(s.Phase), Done: s.Done, Total: s.Total,
+			Chunks: s.Chunks, First: s.First, Err: s.Err,
+		}
+	})
 }

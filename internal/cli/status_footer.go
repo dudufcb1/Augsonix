@@ -262,6 +262,9 @@ func (m chatTUI) statusTelemetryGroups() []string {
 		if jt := m.jobsTag(); jt != "" {
 			data = append(data, footerMetric(i18n.M.ChatStatusJobsLabel, footerInfo(ansi.Strip(jt))))
 		}
+		if ix := m.indexStatusGroup(); ix != "" {
+			data = append(data, ix)
+		}
 	}
 	if m.balance != "" {
 		data = append(data, footerMetric(i18n.M.ChatStatusBalanceLabel, footerValue(m.balance)))
