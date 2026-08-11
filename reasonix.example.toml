@@ -13,6 +13,8 @@ theme = "auto"   # auto|dark|light; controls CLI colors only; REASONIX_THEME can
 # shortcut_layout = "desktop"   # classic|desktop; compatibility setting; Shift+Tab toggles Plan, Ctrl+Y toggles YOLO
 # cursor_shape = "bar"   # block|underline|bar; text input cursor shape; slim default avoids covering CJK characters
 show_turn_usage = true   # CLI/TUI: show per-request token and cost receipts in transcript scrollback
+show_reasoning = false   # Ctrl+O: show the model's thinking text; false = collapsed
+show_tool_output = false # Ctrl+T: show what read-only tools returned (grep, read_file, code_search)
 
 [desktop]
 # language = "auto"   # auto|en|zh; auto follows the browser/OS locale
@@ -264,7 +266,7 @@ model = "voyage-code-4"
 # Debe ser una de las que acepta el modelo (voyage-code-4: 256, 512, 1024, 2048).
 # Con 2048 el índice HNSW de pgvector solo funciona vía el cast a halfvec, que
 # este backend ya hace.
-dimensions = 1024
+dimensions = 2048
 # Reordena los candidatos leyendo consulta y código juntos, que es algo que un
 # embedding no puede hacer. Vacío desactiva el rerank y deja el orden del coseno.
 rerank_model = "rerank-2.5"

@@ -59,6 +59,8 @@ var ChineseTraditional = Messages{
 	ChatStatusIndexStarting:                "建構中",
 	ChatStatusIndexFailed:                  "失敗",
 	ChatStatusIndexQuota:                   "配額用盡",
+	ChatToolOutputOn:                       "顯示工具輸出 (Ctrl+T)",
+	ChatToolOutputOff:                      "隱藏工具輸出 (Ctrl+T)",
 	ChatStatusBalanceLabel:                 "餘額",
 	ChatStatusCacheNowFmt:                  "本次命中 %s",
 	ChatStatusCacheAvgFmt:                  "平均 %s",

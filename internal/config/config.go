@@ -256,13 +256,14 @@ const (
 // UIConfig controls CLI presentation-only settings. Desktop appearance is kept in
 // DesktopConfig so desktop preferences cannot alter terminal output or prompts.
 type UIConfig struct {
-	Theme          string `toml:"theme"`           // auto|dark|light; empty resolves to auto
-	ThemeStyle     string `toml:"theme_style"`     // graphite|aurora|slate|carbon|nocturne|amber and legacy aliases
-	ShortcutLayout string `toml:"shortcut_layout"` // classic|desktop; accepted for compatibility
-	CloseBehavior  string `toml:"close_behavior"`  // legacy desktop close behavior; prefer desktop.close_behavior
-	ShowReasoning  bool   `toml:"show_reasoning"`  // Ctrl+O / /verbose: show thinking text in CLI; false = collapsed
-	ShowTurnUsage  bool   `toml:"show_turn_usage"` // show per-request token/cost receipts in the CLI/TUI transcript
-	CursorShape    string `toml:"cursor_shape"`    // block|underline|bar; empty defaults to bar
+	Theme          string `toml:"theme"`            // auto|dark|light; empty resolves to auto
+	ThemeStyle     string `toml:"theme_style"`      // graphite|aurora|slate|carbon|nocturne|amber and legacy aliases
+	ShortcutLayout string `toml:"shortcut_layout"`  // classic|desktop; accepted for compatibility
+	CloseBehavior  string `toml:"close_behavior"`   // legacy desktop close behavior; prefer desktop.close_behavior
+	ShowReasoning  bool   `toml:"show_reasoning"`   // Ctrl+O / /verbose: show thinking text in CLI; false = collapsed
+	ShowTurnUsage  bool   `toml:"show_turn_usage"`  // show per-request token/cost receipts in the CLI/TUI transcript
+	ShowToolOutput bool   `toml:"show_tool_output"` // Ctrl+T: show what read-only tools returned; false = silent
+	CursorShape    string `toml:"cursor_shape"`     // block|underline|bar; empty defaults to bar
 }
 
 // CLIConfig controls user-global native CLI behavior. It is separate from
@@ -1878,9 +1879,8 @@ func Default() *Config {
 			MaxSubagentConcurrency: 6,
 			MaxParallelWriters:     3,
 		},
-		// Mode "ask" with no rules keeps `reasonix run` autonomous (no TTY → ask
-		// resolves to allow) while `reasonix` prompts before writers. Users add
-		// deny/allow rules to harden or quiet specific tools.
+		// Mode "ask" with no rules keeps `reasonix run` autonomous (no TTY → allow)
+		// while `reasonix` prompts before writers; rules harden or quiet tools.
 		Permissions: PermissionsConfig{Mode: "ask"},
 		// Sandbox uses platform defaults: macOS/Linux jail bash, Windows has no
 		// OS-level Bash sandbox and forces it off. Network=true so an absent

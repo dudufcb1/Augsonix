@@ -62,6 +62,8 @@ var English = Messages{
 	ChatStatusIndexStarting:                "building",
 	ChatStatusIndexFailed:                  "failed",
 	ChatStatusIndexQuota:                   "quota spent",
+	ChatToolOutputOn:                       "tool output shown (Ctrl+T)",
+	ChatToolOutputOff:                      "tool output hidden (Ctrl+T)",
 	ChatStatusBalanceLabel:                 "BAL",
 	ChatStatusCacheNowFmt:                  "turn hit %s",
 	ChatStatusCacheAvgFmt:                  "avg %s",

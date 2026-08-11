@@ -133,9 +133,8 @@ func RunWithBuildInfo(args []string, info BuildInfo) int {
 		configureCLIThemeFromConfig()
 		return configCommand(rest)
 	case "init":
-		// Project memory (AGENTS.md) is model-generated in-session — `/init` runs
-		// the codebase analysis. This CLI entry just points there (and to `setup`
-		// for config), so `reasonix init` isn't a dead end.
+		// AGENTS.md is model-generated in-session by `/init`. This entry just points
+		// there (and to `setup`), so `reasonix init` isn't a dead end.
 		configureCLIThemeFromConfig()
 		return initHint()
 	case "acp":
@@ -1261,6 +1260,7 @@ func chatREPL(args []string, version string) int {
 		m.outputStyle = cfg.Agent.OutputStyle    // shown as the active entry in /output-style
 		m.statuslineCmd = cfg.Statusline.Command // custom status-line command, "" = built-in row
 		m.showReasoning = cfg.UI.ShowReasoning   // /verbose persistence: start with config default
+		m.showToolOutput = cfg.UI.ShowToolOutput // Ctrl+T persistence
 		m.showTurnUsage = cfg.UI.ShowTurnUsage   // retain usage accounting even when transcript receipts are hidden
 		m.cfg = cfg
 	}

@@ -62,21 +62,17 @@ type chatTUI struct {
 	// nativeScrollback keeps Termux out of alt-screen mode so taps still focus
 	// the textarea and raise the soft keyboard.
 	nativeScrollback bool
-	// mouseCaptureOff releases mouse ownership back to the terminal (View() sets
-	// tea.MouseModeNone instead of MouseModeCellMotion) so its native
-	// click-drag selection and right-click context menu work again. Toggled by
-	// "/mouse" or REASONIX_DISABLE_MOUSE at startup; trades away in-app
-	// drag-select, the transcript scrollbar, and wheel-scroll while it's on,
-	// since the terminal no longer forwards those events to Reasonix.
+	// mouseCaptureOff returns mouse ownership to the terminal so its native
+	// selection and context menu work again ("/mouse" or REASONIX_DISABLE_MOUSE).
+	// Costs in-app drag-select, the scrollbar, and wheel-scroll while it is on.
 	mouseCaptureOff bool
 
 	input       textarea.Model
 	composerSel composerSelection
 	composerMap composerLayoutCache
-	// composerScrollOffset is an independent view offset used after the user
-	// wheels inside an overflowing composer. The textarea keeps ownership of the
-	// real insertion cursor; a subsequent edit or cursor key reattaches the view
-	// to that cursor without the wheel having moved it.
+	// composerScrollOffset is the view offset after wheeling inside an overflowing
+	// composer. The textarea keeps the real cursor; the next edit or cursor key
+	// reattaches the view to it without the wheel having moved it.
 	composerScrollOffset   int
 	composerScrollDetached bool
 	spinner                spinner.Model
@@ -102,10 +98,9 @@ type chatTUI struct {
 	// retained in transcript scrollback. Usage accounting remains active either way.
 	showTurnUsage bool
 
-	// balance is the last-fetched wallet-balance readout (e.g. "¥110.00"), "" when
-	// the provider declares no balance_url or a fetch failed. Refreshed async on
-	// startup and after each turn so the status line stays roughly current without
-	// blocking the event loop.
+	// balance is the last wallet-balance readout (e.g. "¥110.00"), "" with no
+	// balance_url or a failed fetch. Refreshed async on startup and after each
+	// turn so the status line stays current without blocking the event loop.
 	balance string
 
 	// todoArgs is the latest todo_write call's raw args; it drives the task list
@@ -145,11 +140,12 @@ type chatTUI struct {
 	// finalize — at a tool/usage boundary or turn end — not previewed live, so
 	// the bottom region stays a stable height. pendingCommit queues finalized
 	// lines so a single Update emits exactly one ordered tea.Println.
-	reasoning     *strings.Builder
-	pending       *strings.Builder
-	pendingCommit *[]string
-	showReasoning bool // Ctrl+O / /verbose: show raw thinking text in the CLI
-	cfg           *config.Config
+	reasoning      *strings.Builder
+	pending        *strings.Builder
+	pendingCommit  *[]string
+	showReasoning  bool // Ctrl+O / /verbose: show raw thinking text in the CLI
+	showToolOutput bool // Ctrl+T: mostrar lo que devolvieron las tools de lectura
+	cfg            *config.Config
 	// reasoningLineIdx is the transcript index of the live "▎ thinking…" marker
 	// while a reasoning block streams; it's rewritten to "▎ thought for Ns" when
 	// the block closes. -1 when no block is open. transcriptDirty forces a
@@ -1071,9 +1067,8 @@ func (m chatTUI) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, nil
 			}
 		}
-		// Outside the composer, or once its internal viewport has reached the
-		// requested edge, continue the gesture in the transcript. This mirrors
-		// ordinary nested-scroll behavior and avoids a dead wheel at boundaries.
+		// Outside the composer, or once it hits the requested edge, continue in the
+		// transcript: nested-scroll behavior, and no dead wheel at the boundaries.
 		switch msg.Button {
 		case tea.MouseWheelUp:
 			m.viewport.ScrollUp(3)
@@ -1084,12 +1079,10 @@ func (m chatTUI) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case tea.MouseClickMsg:
-		// Match the complete terminal right-click convention while Reasonix owns
-		// the mouse: copy an active selection, otherwise paste clipboard text into
-		// the visible composer. Left-press begins a selection unless it lands on
-		// the transcript scrollbar or a shell-output hint line.
-		// Middle-click pastes tmux's current buffer when tmux owns the pane;
-		// otherwise it follows the X11/Wayland PRIMARY-selection convention.
+		// Terminal right-click convention while Reasonix owns the mouse: copy an
+		// active selection, else paste into the composer. Left-press starts a
+		// selection unless it hits the scrollbar or a shell-output hint. Middle
+		// pastes tmux's buffer, or the X11/Wayland PRIMARY selection.
 		if msg.Button == tea.MouseMiddle {
 			if m.hideComposer() {
 				return m, nil
@@ -1636,8 +1629,8 @@ func (m chatTUI) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "ctrl+o":
 			m.toggleVerboseReasoning(m.state != tuiRunning)
 			return m, finalize(m, cmds)
-		case "ctrl+b":
-			m.toggleShellOutput()
+		case "ctrl+b", "ctrl+t":
+			m.toggleOutputDetail(msg.String())
 			return m, finalize(m, cmds)
 		case "enter":
 			if m.state == tuiRunning {
@@ -4370,6 +4363,7 @@ func (m *chatTUI) ingestEvent(e event.Event) {
 		// output so collapseToolOutput has a last-resort source for the line
 		// count when the live state was already reset by a back-to-back tool.
 		m.collapseToolOutput(e.Tool.ID, e.Tool.Output)
+		m.commitToolOutput(e.Tool)
 		if e.Tool.Name == "todo_write" && e.Tool.Err == "" {
 			m.todoArgs = e.Tool.Args
 		}

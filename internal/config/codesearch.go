@@ -53,8 +53,9 @@ type CodeSearchConfig struct {
 	// Model es el modelo de embeddings. Cambiarlo invalida el índice: vectores
 	// de modelos distintos no son comparables.
 	Model string `toml:"model"`
-	// Dimensions debe estar entre las que acepta el modelo. Cambiarla también
-	// invalida el índice.
+	// Dimensions debe estar entre las que acepta el modelo. Cambiarla invalida
+	// el índice, y por Matryoshka se puede bajar después sin reindexar pero no
+	// subir: por eso el valor por defecto es el mayor que acepta el modelo.
 	Dimensions int `toml:"dimensions"`
 	// RerankModel reordena los candidatos leyendo consulta y código juntos.
 	// Vacío desactiva el rerank y deja el orden del coseno.
