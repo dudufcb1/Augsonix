@@ -77,7 +77,7 @@ func openCodeSearchIndex(ctx context.Context, root string, cfg config.CodeSearch
 	// para que mover la carpeta no obligue a reindexar y volver a pagarlo. La
 	// misma identidad separa proyectos dentro de una base compartida.
 	ws := codesearch.IdentifyWorkspace(root)
-	dir := filepath.Join(codesearch.IndexDir(root), ws.ID)
+	dir := filepath.Join(config.CodeSearchIndexDir(), ws.ID)
 
 	store, err := openCodeSearchStore(ctx, dir, ws.ID, cfg)
 	if err != nil {
@@ -121,9 +121,9 @@ func syncCodeSearch(ctx context.Context, ix *codesearch.Index, stderr io.Writer)
 }
 
 // indexDirForTest expone dónde queda el índice de un workspace, para poder
-// verificar que se guarda bajo su identidad y no bajo su ruta.
+// verificar que vive fuera del proyecto y bajo su identidad.
 func indexDirForTest(root string) string {
-	return filepath.Join(codesearch.IndexDir(root), codesearch.IdentifyWorkspace(root).ID)
+	return filepath.Join(config.CodeSearchIndexDir(), codesearch.IdentifyWorkspace(root).ID)
 }
 
 // codeSearchAvailable predice si la herramienta se va a registrar, sin

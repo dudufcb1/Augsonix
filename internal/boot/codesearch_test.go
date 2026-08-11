@@ -137,13 +137,18 @@ api_key_env = "CODESEARCH_TEST_KEY"
 	}
 }
 
-func TestCodeSearchIndexLivesUnderWorkspaceIdentity(t *testing.T) {
-	// El índice se guarda bajo la identidad del workspace, no bajo su ruta, para
-	// que mover la carpeta no obligue a reindexar y volver a pagar los
-	// embeddings.
-	dir := t.TempDir()
-	base := filepath.Base(indexDirForTest(dir))
-	if base == "" || base == "codesearch" {
+func TestCodeSearchIndexLivesOutsideTheProject(t *testing.T) {
+	// El índice es un artefacto derivado: se reconstruye desde el código. No
+	// tiene por qué vivir en el árbol de trabajo de nadie, donde aparece en los
+	// listados y en cualquier repositorio cuyo .gitignore no lo cubra.
+	project := t.TempDir()
+	dir := indexDirForTest(project)
+	if strings.HasPrefix(dir, project) {
+		t.Errorf("el índice quedó dentro del proyecto: %s", dir)
+	}
+	// Y bajo la identidad del workspace, para que mover la carpeta no obligue a
+	// reindexar y volver a pagar los embeddings.
+	if base := filepath.Base(dir); base == "" || base == "codesearch" {
 		t.Errorf("el índice no quedó bajo un identificador de workspace: %q", base)
 	}
 }

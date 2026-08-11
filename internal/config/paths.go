@@ -350,6 +350,12 @@ func MissingReasoningWarnStateDir() string {
 // WorkspaceLeaseDir stores cross-process Delivery writer locks outside user
 // workspaces. It intentionally follows the cache root rather than project or
 // session state: taking a lease must never dirty the repository it protects.
+// CodeSearchIndexDir is where the semantic index lives: the user's state
+// directory, never the project. It is derived data, so it stays out of the tree.
+func CodeSearchIndexDir() string {
+	return filepath.Join(userSupportDir(), "codesearch")
+}
+
 func WorkspaceLeaseDir() string {
 	// Deliberately ignore REASONIX_HOME/REASONIX_CACHE_HOME here. Two app
 	// instances with different state profiles can still open the same user

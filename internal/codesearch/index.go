@@ -223,11 +223,6 @@ func (ix *Index) collect(ctx context.Context) ([]string, error) {
 	return out, nil
 }
 
-// IndexDir es donde vive el índice de un workspace.
-func IndexDir(root string) string {
-	return filepath.Join(root, ".reasonix", "codesearch")
-}
-
 // Ready reporta cuántos chunks hay indexados y si ya se puede buscar. Un índice
 // vacío no es un error: es uno que todavía no termina de construirse.
 func (ix *Index) Ready() (int, bool) {

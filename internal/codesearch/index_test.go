@@ -63,11 +63,14 @@ func newTestIndex(t *testing.T) (*Index, string, *fakeEmbedder) {
 	t.Helper()
 	root := t.TempDir()
 	emb := &fakeEmbedder{dims: 8}
-	store, err := OpenLocalStore(filepath.Join(root, ".reasonix", "codesearch"), "fake", 8)
+	// Un solo directorio para ambos, como en producción: store y state comparten
+	// carpeta, y separarlos dejaría a LoadState leyendo un sitio que nadie escribe.
+	indexDir := filepath.Join(t.TempDir(), "index")
+	store, err := OpenLocalStore(indexDir, "fake", 8)
 	if err != nil {
 		t.Fatal(err)
 	}
-	state, err := LoadState(filepath.Join(root, ".reasonix", "codesearch"))
+	state, err := LoadState(indexDir)
 	if err != nil {
 		t.Fatal(err)
 	}
