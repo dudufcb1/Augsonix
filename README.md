@@ -1,227 +1,149 @@
-<p align="center">
-  <img src="docs/logo-ghost-wave-effect.svg" alt="Reasonix" width="360"/>
-</p>
+# Augsonix
 
-<p align="center">
-  <strong>English</strong>
-  &nbsp;·&nbsp;
-  <a href="./README.zh-CN.md">简体中文</a>
-  &nbsp;·&nbsp;
-  <a href="./docs/GUIDE.md">Guide</a>
-  &nbsp;·&nbsp;
-  <a href="./docs/ACP.md">ACP</a>
-  &nbsp;·&nbsp;
-  <a href="./docs/EXTENSIONS.md">Extensions</a>
-  &nbsp;·&nbsp;
-  <a href="./docs/SPEC.md">Spec</a>
-  &nbsp;·&nbsp;
-  <a href="https://esengine.github.io/DeepSeek-Reasonix/">Website</a>
-  &nbsp;·&nbsp;
-  <strong><a href="https://discord.gg/XF78rEME2D">Discord</a></strong>
-</p>
+Agente de código para terminal, con **motor de búsqueda semántica propio**.
 
-<p align="center">
-  <a href="https://www.npmjs.com/package/reasonix"><img src="https://img.shields.io/npm/v/reasonix.svg?style=flat-square&color=cb3837&labelColor=161b22&logo=npm&logoColor=white" alt="npm version"/></a>
-  <a href="https://github.com/esengine/DeepSeek-Reasonix/actions/workflows/ci.yml"><img src="https://img.shields.io/github/actions/workflow/status/esengine/DeepSeek-Reasonix/ci.yml?style=flat-square&label=ci&labelColor=161b22&logo=githubactions&logoColor=white" alt="CI"/></a>
-  <a href="./LICENSE"><img src="https://img.shields.io/npm/l/reasonix.svg?style=flat-square&color=8b949e&labelColor=161b22" alt="license"/></a>
-  <a href="https://www.npmjs.com/package/reasonix"><img src="https://img.shields.io/npm/dm/reasonix.svg?style=flat-square&color=3fb950&labelColor=161b22&label=downloads" alt="downloads"/></a>
-  <a href="https://github.com/esengine/DeepSeek-Reasonix/stargazers"><img src="https://img.shields.io/github/stars/esengine/DeepSeek-Reasonix.svg?style=flat-square&color=dbab09&labelColor=161b22&logo=github&logoColor=white" alt="GitHub stars"/></a>
-  <a href="https://atomgit.com/esengine/DeepSeek-Reasonix"><img src="https://atomgit.com/esengine/DeepSeek-Reasonix/star/badge.svg" alt="AtomGit stars"/></a>
-  <a href="https://github.com/esengine/DeepSeek-Reasonix/graphs/contributors"><img src="https://img.shields.io/github/contributors/esengine/DeepSeek-Reasonix.svg?style=flat-square&color=bc8cff&labelColor=161b22&logo=github&logoColor=white" alt="contributors"/></a>
-  <a href="https://github.com/esengine/DeepSeek-Reasonix/discussions"><img src="https://img.shields.io/github/discussions/esengine/DeepSeek-Reasonix.svg?style=flat-square&color=58a6ff&labelColor=161b22&logo=github&logoColor=white" alt="Discussions"/></a>
-  <a href="https://discord.gg/XF78rEME2D"><img src="https://img.shields.io/badge/discord-join-5865F2.svg?style=flat-square&labelColor=161b22&logo=discord&logoColor=white" alt="Discord"/></a>
-</p>
-
-<p align="center">
-  <a href="https://trendshift.io/repositories/27020?utm_source=trendshift-badge&amp;utm_medium=badge&amp;utm_campaign=badge-trendshift-27020" target="_blank" rel="noopener noreferrer"><img src="https://trendshift.io/api/badge/trendshift/repositories/27020/monthly?language=Go" alt="esengine/DeepSeek-Reasonix | Trendshift" width="250" height="55"/></a>
-  <a href="https://trendshift.io/repositories/27020?utm_source=repository-badge&amp;utm_medium=badge&amp;utm_campaign=badge-repository-27020" target="_blank" rel="noopener noreferrer"><img src="https://trendshift.io/api/badge/repositories/27020" alt="esengine/DeepSeek-Reasonix | Trendshift" width="250" height="55"/></a>
-</p>
-
-<br/>
-
-<p align="center"><strong>Open source · MIT · a single Go binary</strong></p>
-<h3 align="center">A coding agent you can leave running.</h3>
-<p align="center">One local engine, four ways in — terminal, desktop app, browser, or your editor over ACP. Plan mode, permissions, a workspace sandbox and per-turn checkpoints keep a long autonomous run something you can still read and undo.</p>
-
-<div align="center">
-  <video src="https://github.com/user-attachments/assets/ab2f3878-e224-4931-8254-060e7695cfb9" controls preload="metadata" width="560"></video>
-</div>
-
-<br/>
-
-> [!IMPORTANT]
-> **Community · 加入社区** — bilingual Discord for setup help (`#help` / `#求助`), workflow showcases, and feature ideas. → **<https://discord.gg/XF78rEME2D>**
-
-<br/>
-
-## Features
-
-- **Config-driven.** Providers, the agent, enabled tools, and plugins are all
-  declared in `reasonix.toml`. No hardcoded models.
-- **Multi-model & composable.** DeepSeek ships as a preset; any
-  OpenAI-compatible endpoint is a config entry, not new code. Optionally run
-  two models together (executor + planner) in separate, cache-stable sessions.
-- **Plugin-driven.** MCP servers contribute tools, prompts, and resources;
-  Extension Protocol v1 sidecars can also intercept runtime events, contribute
-  Providers and structured UI, and ship versioned plugin packages.
-- **Cache-aware context maintenance.** Startup injects a small stable environment
-  summary, stale tool output is snipped/pruned before summary compaction, and the
-  built-in tool schema contract is documented for regression review.
-- **Zero-friction distribution.** `CGO_ENABLED=0` single binary; cross-compile
-  to six targets with one command. The result is a fully self-contained static
-  binary — nothing to install on the target machine beyond the binary itself.
-
-## Install
-
-Choose the path that matches how you want to use Reasonix. The CLI/TUI,
-desktop app, and VS Code extension all use the same local Reasonix engine.
-
-### Path A: CLI / TUI
-
-Install the native binary through npm on any supported platform, or use
-Homebrew on macOS:
-
-```sh
-npm i -g reasonix                  # any OS; pulls the prebuilt native binary
-brew install esengine/reasonix/reasonix   # macOS
-```
-
-Prebuilt archives (`darwin|linux|windows × amd64|arm64`) and `SHA256SUMS` are on
-every [GitHub release](https://github.com/esengine/DeepSeek-Reasonix/releases).
-
-### Path B: Desktop app
-
-Use the [official download page](https://reasonix.io/?download=desktop#start)
-for the latest desktop build.
-
-| Platform | Package | Architecture |
-| --- | --- | --- |
-| macOS | Universal `.dmg` or `.zip` | Apple Silicon / Intel |
-| Windows | Installer `.exe` or portable `.zip` | x64 / ARM64 |
-| Linux | `.deb` or `.tar.gz` | x64 |
-
-Windows installers are code-signed through [SignPath.io](https://signpath.io/)
-with a free certificate provided by the [SignPath Foundation](https://signpath.org/).
-
-### Path C: VS Code extension
-
-Complete Path A first. The extension does not bundle the CLI; it starts your
-local `reasonix acp` backend and adds native chat, editor context, tool-call
-approvals, model selection, and workspace sessions.
-
-- **VS Code:** [install from Visual Studio Marketplace](https://marketplace.visualstudio.com/items?itemName=SivanLiu.reasonix-agent)
-- **VSCodium / Eclipse Theia:** [install from Open VSX Registry](https://open-vsx.org/extension/SivanLiu/reasonix-agent)
-- **Extension ID:** `SivanLiu.reasonix-agent` · [source and usage guide](https://github.com/SivanCola/reasonix-vscode)
-
-### Path D: Build from source
-
-```sh
-git clone https://github.com/esengine/DeepSeek-Reasonix.git
-cd DeepSeek-Reasonix
-make build      # -> bin/reasonix(.exe)
-make cross      # -> dist/ (darwin|linux|windows × amd64|arm64)
-```
-
-## Quick start
-
-### CLI / TUI
-
-These commands are for the CLI/TUI installed through Path A:
-
-```sh
-reasonix setup                      # configure a provider and model
-reasonix                            # start an interactive session
-reasonix run "implement the TODOs in main.go"
-```
-
-In an interactive session, run `/init` when you want Reasonix to create project
-instructions.
-
-### Desktop app
-
-Download the installer for your platform from the
-[official download page](https://reasonix.io/?download=desktop#start), install
-and launch Reasonix, then configure a provider and model in the app. The CLI
-commands above are not required for the desktop app.
-
-For advanced CLI usage and configuration, see the **[CLI reference](./docs/CLI.md)**,
-**[Guide](./docs/GUIDE.md)**, and
-**[configuration paths](./docs/CONFIG_PATHS.md)**.
-
-## Documentation
-
-- **Getting started:** [Guide](./docs/GUIDE.md) · [CLI reference](./docs/CLI.md) ·
-  [Configuration paths](./docs/CONFIG_PATHS.md) · [ACP editor integration](./docs/ACP.md)
-- **Features & troubleshooting:** [Subagent profiles](./docs/SUBAGENT_PROFILES.md) ·
-  [Context Engine v2](./docs/SESSION_MEMORY_RETRIEVAL.md) ·
-  [Capability diagnostics](./docs/CAPABILITY_DIAGNOSTICS.md) ·
-  [Recovery and updates](./docs/RECOVERY.md) · [Bot guide](./docs/BOT_GUIDE.md) ·
-  [Checkpoints & rewind](./docs/CHECKPOINTS.md)
-- **Engineering & migration:** [Spec](./docs/SPEC.md) ·
-  [Task contracts & pause policy](./docs/TASK_CONTRACT.md) ·
-  [Tool contract](./docs/TOOL_CONTRACT.md) · [Migrating from 0.x](./docs/MIGRATING.md)
-- **Extension development:** [Extensions](./docs/EXTENSIONS.md) ·
-  [Plugin packages and Manifest v1](./docs/PLUGIN_PACKAGES.md) ·
-  [Extension Protocol](./docs/EXTENSION_PROTOCOL.md) ·
-  [Go SDK and starter](./sdk/go/README.md)
-
-## Star History
-
-<a href="https://www.star-history.com/?repos=esengine%2FDeepSeek-Reasonix&type=date&legend=top-left">
- <picture>
-   <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/esengine/DeepSeek-Reasonix/star-history/assets/star-history/star-history-dark.svg" />
-   <source media="(prefers-color-scheme: light)" srcset="https://raw.githubusercontent.com/esengine/DeepSeek-Reasonix/star-history/assets/star-history/star-history-light.svg" />
-   <img alt="Star History Chart" src="https://raw.githubusercontent.com/esengine/DeepSeek-Reasonix/star-history/assets/star-history/star-history-light.svg" />
- </picture>
-</a>
-
-<br/>
-
-## Acknowledgments
-
-A small list of folks whose work has shaped Reasonix the most — the current top
-20 contributors by commit count. The full contributor graph is on
-[GitHub](https://github.com/esengine/DeepSeek-Reasonix/graphs/contributors?all=1).
-
-<!-- reasonix-top-contributors:start -->
-| Contributor | Contributor | Contributor | Contributor |
-| --- | --- | --- | --- |
-| [**SivanCola**](https://github.com/SivanCola) | [**esengine**](https://github.com/esengine) | [**ttmouse**](https://github.com/ttmouse) | [**lifu963**](https://github.com/lifu963) |
-| **reasonix** | [**HUQIANTAO**](https://github.com/HUQIANTAO) | [**GTC2080**](https://github.com/GTC2080) | [**light-front-theory**](https://github.com/light-front-theory) |
-| **merge-order-check** | [**Li-Charles-One**](https://github.com/Li-Charles-One) | [**eghrhegpe**](https://github.com/eghrhegpe) | **wufengfan** |
-| [**CVEngineer66**](https://github.com/CVEngineer66) | [**dependabot\[bot\]**](https://github.com/apps/dependabot) | [**lanshi17**](https://github.com/lanshi17) | [**SuMuxi66**](https://github.com/SuMuxi66) |
-| [**CnsMaple**](https://github.com/CnsMaple) | [**cyq1017**](https://github.com/cyq1017) | [**JesonChou**](https://github.com/JesonChou) | [**XTLine**](https://github.com/XTLine) |
-<!-- reasonix-top-contributors:end -->
-
-Special thanks to [**Bernardxu123**](https://github.com/Bernardxu123) for designing the project logo and intro video.
-
-<p align="center">
-  <a href="https://github.com/esengine/DeepSeek-Reasonix/graphs/contributors">
-    <img src="https://contrib.rocks/image?repo=esengine/DeepSeek-Reasonix&max=100&columns=12" alt="Contributors to esengine/DeepSeek-Reasonix" width="860"/>
-  </a>
-</p>
-
-<br/>
+Es un fork de [DeepSeek-Reasonix](https://github.com/esengine/DeepSeek-Reasonix).
+El upstream sigue siendo la base y de ahí se traen mejoras a mano, eligiendo qué
+entra; este repositorio existe para que los cambios de abajo no dependan de que
+alguien más los acepte.
 
 ---
 
-<p align="center">
-  <sub>MIT — see <a href="./LICENSE">LICENSE</a></sub>
-  <br/>
-  <sub>Built by the community at <a href="https://github.com/esengine/DeepSeek-Reasonix/graphs/contributors">esengine/DeepSeek-Reasonix</a></sub>
-</p>
+## Por qué existe
+
+Reasonix es un CLI excelente y muy barato de operar: mantiene el prefijo del
+prompt estable entre turnos, así que DeepSeek lo reconoce y cobra el 2% por lo
+que ya vio. Sobre esa base faltaba una pieza: **encontrar código por
+significado**, no por coincidencia de texto.
+
+`grep` sirve cuando ya sabes la palabra exacta. No sirve cuando recuerdas qué
+hace algo pero no cómo se llama, cuando el código está en otro idioma que tu
+pregunta, o cuando el concepto está repartido entre archivos que no comparten
+ni una cadena. Eso es lo que resuelve este fork.
 
 ---
 
-<p align="center"><sub><strong>Support this project</strong></sub></p>
+## Qué agrega sobre el upstream
 
-If Reasonix has been useful and you'd like to say thanks, you can. It stays a
-coffee, not a contract — donations don't buy feature priority or change how
-issues get triaged.
+### Búsqueda semántica del código (`code_search`)
 
-- **International** — PayPal: [paypal.me/yuhuahui](https://paypal.me/yuhuahui)
-- **国内** — 微信支付（扫码）
+Indexa el workspace en vectores y responde preguntas en lenguaje natural
+devolviendo el código relevante con archivo y rango de líneas.
 
-<p align="center">
-  <img src=".github/sponsor/wechat-pay.jpg" alt="WeChat Pay QR code" width="180"/>
-</p>
+- **Troceo por fronteras de declaración.** El corte respeta funciones y clases
+  en lugar de partir cada 5000 caracteres: `go/parser` para Go, un escáner de
+  llaves para PHP, TypeScript y JavaScript, y sangría para Python. Medido sobre
+  5526 archivos reales, las declaraciones partidas bajan de 19.7% a 5.4%.
+- **La garantía no es que el corte sea óptimo** —es una heurística— **sino que
+  nunca mienta**: el texto de un bloque son exactamente las líneas que dice
+  contener, los bloques no se pisan y entre todos cubren el archivo. Una
+  detección incoherente se descarta entera y se vuelve al troceo por caracteres.
+- **Dos etapas**: barrido vectorial amplio y reordenamiento leyendo consulta y
+  código juntos, que es lo que un embedding no puede hacer.
+- **El índice se reconstruye solo** cuando cambia cómo se construyó. La receta
+  —versión del troceo y modelo de embeddings— va dentro del hash de cada
+  archivo, así que cambiar cualquiera de los dos invalida lo guardado y se
+  reindexa sin que nadie tenga que acordarse.
+
+### Búsqueda sobre la historia (`git_commit_search`)
+
+Responde "cómo se hizo antes un cambio parecido" o "por qué esto quedó así".
+Indexa el mensaje del commit, los archivos tocados y un recorte del diff, sin
+ningún modelo generando descripciones.
+
+Medido contra `git log --grep` sobre 210 commits reales, con preguntas escritas
+con otras palabras que las del commit: **14 de 15 contra 10 de 15**, y 12 de
+esas 14 en el primer resultado. Donde más gana es cuando el vocabulario no
+coincide —preguntas "cobrar dos veces" y el commit dice "idempotent webhooks"—
+y sobre todo cuando la historia mezcla idiomas.
+
+### Almacén compartido y portable
+
+- **Postgres con pgvector**, o local si no quieres infraestructura.
+- La identidad del workspace se deriva del remoto de git, no de la ruta: mover
+  la carpeta o abrir el proyecto en otra máquina no obliga a reindexar.
+- El índice vive fuera del repositorio, así que no ensucia el árbol de trabajo.
+
+### Varias credenciales con relevo automático
+
+Cuando una cuenta se queda sin cuota entra la siguiente y el trabajo sigue donde
+iba. La decisión es por comportamiento y no por código de error: una ráfaga
+pasajera cede a los pocos reintentos, una cuenta sin margen no cede nunca.
+
+### Indexado rápido
+
+El escaneo procesa varios archivos a la vez y las sentencias van a la base en un
+solo envío. Un proyecto de 62 archivos pasó de 58 segundos a 5.
+
+### Fricción configurable sobre `grep`
+
+Cuando el agente encadena búsquedas de texto sin consultar el índice, se le
+puede pedir que lo intente por significado. Tres modos, del aviso al bloqueo.
+
+### Otros parches sobre el upstream
+
+- **Imágenes en modelos sin visión**: en vez de descartarlas en silencio, se
+  guardan y se le dice al modelo cómo leerlas.
+- **Cabecera `x-opencode-session`**: identifica la sesión en el panel del
+  gateway con algo legible en lugar de ocho caracteres al azar.
+- Ajustes de interfaz: salida de herramientas visible, forma del cursor,
+  título de ventana, indicador de estado del índice.
+
+---
+
+## Relación con el upstream
+
+```
+origin    → este repositorio (donde se trabaja)
+upstream  → esengine/DeepSeek-Reasonix (de donde se eligen mejoras)
+```
+
+Para revisar qué hay de nuevo arriba:
+
+```bash
+git fetch upstream
+git log --oneline HEAD..upstream/main-v2
+```
+
+No hay seguimiento automático: los cambios del upstream se miran y se traen uno
+por uno, para que nada de aquí se pierda en un merge.
+
+---
+
+## Documentación
+
+La del proyecto base sigue vigente; este fork no la cambia.
+
+| | |
+|---|---|
+| [Guía](docs/GUIDE.md) | Empezar a usarlo |
+| [CLI](docs/CLI.md) | Comandos y banderas |
+| [Rutas de configuración](docs/CONFIG_PATHS.md) | Dónde vive cada archivo |
+| [Checkpoints](docs/CHECKPOINTS.md) | Deshacer cambios |
+| [Recuperación](docs/RECOVERY.md) | Cuando algo sale mal |
+| [Extensiones](docs/EXTENSIONS.md) · [Protocolo](docs/EXTENSION_PROTOCOL.md) · [Paquetes](docs/PLUGIN_PACKAGES.md) | Ampliarlo |
+| [ACP](docs/ACP.md) | Integración con editores |
+| [Bot](docs/BOT_GUIDE.md) | Modo bot |
+| [Diagnóstico de capacidades](docs/CAPABILITY_DIAGNOSTICS.md) | Qué soporta cada modelo |
+| [Migración](docs/MIGRATING.md) | Venir de otra versión |
+| [README original](README.zh-CN.md) | El del upstream, en chino |
+
+---
+
+## Compilar
+
+```bash
+make build          # binario en bin/
+go test ./...
+go run ./tools/repolint
+```
+
+Sin CGO, un solo binario estático, con compilación cruzada a las plataformas del
+upstream.
+
+---
+
+## Créditos
+
+Todo el mérito de la base es de [DeepSeek-Reasonix](https://github.com/esengine/DeepSeek-Reasonix)
+y de su autor. Este fork solo agrega lo de arriba.
