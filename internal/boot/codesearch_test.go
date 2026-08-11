@@ -193,3 +193,21 @@ prompt_mode = "mandatory"
 		t.Errorf("se instruyó sobre una tool que no se registró:\n%s", sys)
 	}
 }
+
+func TestCodeSearchPostgresBackendFailsLoudWithoutDSN(t *testing.T) {
+	// Configurar postgres y caer al local en silencio sería lo peor: quien
+	// eligió el backend remoto espera que su índice viaje entre máquinas, y un
+	// local improvisado se vería igual de bien mientras no cumple eso.
+	t.Setenv("CODESEARCH_TEST_KEY", "clave-de-prueba")
+	t.Setenv("CODESEARCH_TEST_DSN", "")
+	names, _ := buildWithCodeSearch(t, `
+[codesearch]
+enabled = true
+api_key_env = "CODESEARCH_TEST_KEY"
+backend = "postgres"
+postgres_url_env = "CODESEARCH_TEST_DSN"
+`)
+	if hasName(names, "code_search") {
+		t.Errorf("la tool se registró con un backend remoto inutilizable; tools=%v", names)
+	}
+}

@@ -37,7 +37,7 @@ func addCodeSearch(ctx context.Context, reg *tool.Registry, root string, cfg con
 		return nil
 	}
 
-	ix, err := openCodeSearchIndex(root, cfg, key, proxy)
+	ix, err := openCodeSearchIndex(ctx, root, cfg, key, proxy)
 	if err != nil {
 		fmt.Fprintf(stderr, "code_search disabled: %v\n", err)
 		return nil
@@ -58,7 +58,7 @@ func addCodeSearch(ctx context.Context, reg *tool.Registry, root string, cfg con
 
 // openCodeSearchIndex arma el índice desde la configuración: cliente del
 // proveedor, almacén de vectores y estado incremental.
-func openCodeSearchIndex(root string, cfg config.CodeSearchConfig, apiKey string, proxy netclient.ProxySpec) (*codesearch.Index, error) {
+func openCodeSearchIndex(ctx context.Context, root string, cfg config.CodeSearchConfig, apiKey string, proxy netclient.ProxySpec) (*codesearch.Index, error) {
 	client, err := netclient.NewHTTPClient(proxy, netclient.TransportOptions{})
 	if err != nil {
 		client = &http.Client{}
@@ -74,13 +74,14 @@ func openCodeSearchIndex(root string, cfg config.CodeSearchConfig, apiKey string
 		HTTP:        client,
 	}
 	// El índice se guarda bajo la identidad del workspace y no bajo su ruta,
-	// para que mover la carpeta no obligue a reindexar y volver a pagarlo.
+	// para que mover la carpeta no obligue a reindexar y volver a pagarlo. La
+	// misma identidad separa proyectos dentro de una base compartida.
 	ws := codesearch.IdentifyWorkspace(root)
 	dir := filepath.Join(codesearch.IndexDir(root), ws.ID)
 
-	store, err := codesearch.OpenLocalStore(dir, cfg.Model, cfg.Dimensions)
+	store, err := openCodeSearchStore(ctx, dir, ws.ID, cfg)
 	if err != nil {
-		return nil, fmt.Errorf("open code index: %w", err)
+		return nil, err
 	}
 	state, err := codesearch.LoadState(dir)
 	if err != nil {
@@ -166,4 +167,27 @@ func bindGateIndex(gate *builtin.SearchGate, ix *codesearch.Index) {
 		return
 	}
 	gate.Usable = func() bool { _, ok := ix.Ready(); return ok }
+}
+
+// openCodeSearchStore elige dónde viven los vectores. El backend remoto no cae
+// al local en silencio si falla: quien configuró Postgres espera que su índice
+// viaje entre máquinas, y un local improvisado se vería igual de bien mientras
+// no cumple eso.
+func openCodeSearchStore(ctx context.Context, dir, workspaceID string, cfg config.CodeSearchConfig) (codesearch.VectorStore, error) {
+	if cfg.Backend != config.BackendPostgres {
+		store, err := codesearch.OpenLocalStore(dir, cfg.Model, cfg.Dimensions)
+		if err != nil {
+			return nil, fmt.Errorf("open code index: %w", err)
+		}
+		return store, nil
+	}
+	dsn := os.Getenv(cfg.PostgresURLEnv)
+	if dsn == "" {
+		return nil, fmt.Errorf("code index backend postgres: %s is not set", cfg.PostgresURLEnv)
+	}
+	store, err := codesearch.OpenPostgresStore(ctx, dsn, workspaceID, cfg.Model, cfg.Dimensions)
+	if err != nil {
+		return nil, fmt.Errorf("open code index: %w", err)
+	}
+	return store, nil
 }
