@@ -25,18 +25,21 @@ func codeSearchReindex(cfg config.CodeSearchConfig, root string, force bool) int
 		fmt.Fprintln(os.Stderr, "codesearch: apagado — activa [codesearch] enabled en reasonix.toml")
 		return 1
 	}
-	key := os.Getenv(cfg.APIKeyEnv)
-	if key == "" {
+	keys := boot.CodeSearchKeyring(cfg.APIKeyEnv)
+	if keys.Len() == 0 {
 		fmt.Fprintf(os.Stderr, "codesearch: %s no está definida\n", cfg.APIKeyEnv)
 		return 1
 	}
+	keys.OnRetire(func(spent, alive, total int) {
+		fmt.Fprintf(os.Stderr, "\nse agotó la cuota de la credencial %d de %d; quedan %d\n", spent, total, alive)
+	})
 
 	// Ctrl+C corta pero no tira lo hecho: lo embebido ya quedó guardado con su
 	// hash, y el siguiente intento retoma desde ahí.
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	ix, err := boot.OpenCodeSearchIndex(ctx, root, cfg, key, netclient.ProxySpec{})
+	ix, err := boot.OpenCodeSearchIndex(ctx, root, cfg, keys, netclient.ProxySpec{})
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "codesearch: %v\n", err)
 		return 1
@@ -70,7 +73,7 @@ func codeSearchReindex(cfg config.CodeSearchConfig, root string, force bool) int
 		fmt.Printf("consumo    %s tokens del proveedor\n", humanCount(used))
 	}
 	if cfg.Commits {
-		if code := reindexCommits(ctx, cfg, root, key); code != 0 {
+		if code := reindexCommits(ctx, cfg, root, keys); code != 0 {
 			return code
 		}
 	}
@@ -80,8 +83,8 @@ func codeSearchReindex(cfg config.CodeSearchConfig, root string, force bool) int
 // reindexCommits construye el índice de la historia después del de código. Va
 // aquí y no en un comando aparte porque quien reindexa un proyecto quiere las
 // dos mitades al día, no una.
-func reindexCommits(ctx context.Context, cfg config.CodeSearchConfig, root, key string) int {
-	ix, err := boot.OpenCommitIndex(ctx, root, cfg, key, netclient.ProxySpec{})
+func reindexCommits(ctx context.Context, cfg config.CodeSearchConfig, root string, keys *codesearch.Keyring) int {
+	ix, err := boot.OpenCommitIndex(ctx, root, cfg, keys, netclient.ProxySpec{})
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "commits: %v\n", err)
 		return 1

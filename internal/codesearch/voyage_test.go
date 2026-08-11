@@ -15,7 +15,7 @@ func voyageServer(t *testing.T, handler http.HandlerFunc) *Voyage {
 	srv := httptest.NewServer(handler)
 	t.Cleanup(srv.Close)
 	return &Voyage{
-		APIKey:      "test-key",
+		Keys:        NewKeyring("test-key"),
 		EmbedModel:  "voyage-code-3",
 		RerankModel: "rerank-2.5",
 		Dimensions:  3,

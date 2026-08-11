@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"reasonix/internal/codesearch"
@@ -34,13 +35,16 @@ func addCodeSearch(ctx context.Context, reg *tool.Registry, root string, cfg con
 		fmt.Fprintln(stderr, w)
 	}
 	cfg = cfg.Normalized()
-	key := os.Getenv(cfg.APIKeyEnv)
-	if key == "" {
+	keys := CodeSearchKeyring(cfg.APIKeyEnv)
+	if keys.Len() == 0 {
 		fmt.Fprintf(stderr, "code_search disabled: %s is not set\n", cfg.APIKeyEnv)
 		return nil
 	}
+	keys.OnRetire(func(spent, alive, total int) {
+		fmt.Fprintf(stderr, "codesearch: se agotó la cuota de la credencial %d de %d; quedan %d\n", spent, total, alive)
+	})
 
-	ix, err := OpenCodeSearchIndex(ctx, root, cfg, key, proxy)
+	ix, err := OpenCodeSearchIndex(ctx, root, cfg, keys, proxy)
 	if err != nil {
 		fmt.Fprintf(stderr, "code_search disabled: %v\n", err)
 		return nil
@@ -49,7 +53,7 @@ func addCodeSearch(ctx context.Context, reg *tool.Registry, root string, cfg con
 	if t := builtin.NewCodeSearch(ix, gate); t != nil {
 		reg.Add(t)
 	}
-	addCommitSearch(ctx, reg, root, cfg, key, proxy, stderr)
+	addCommitSearch(ctx, reg, root, cfg, keys, proxy, stderr)
 	// Sin la cancelación heredada: el escaneo inicial sobrevive al ensamblaje,
 	// que termina mucho antes de que el índice esté al día.
 	bg := context.WithoutCancel(ctx)
@@ -63,7 +67,7 @@ func addCodeSearch(ctx context.Context, reg *tool.Registry, root string, cfg con
 
 // OpenCodeSearchIndex arma el índice desde la configuración: cliente del
 // proveedor, almacén de vectores y estado incremental.
-func OpenCodeSearchIndex(ctx context.Context, root string, cfg config.CodeSearchConfig, apiKey string, proxy netclient.ProxySpec) (*codesearch.Index, error) {
+func OpenCodeSearchIndex(ctx context.Context, root string, cfg config.CodeSearchConfig, keys *codesearch.Keyring, proxy netclient.ProxySpec) (*codesearch.Index, error) {
 	client, err := netclient.NewHTTPClient(proxy, netclient.TransportOptions{})
 	if err != nil {
 		client = &http.Client{}
@@ -71,7 +75,7 @@ func OpenCodeSearchIndex(ctx context.Context, root string, cfg config.CodeSearch
 	client.Timeout = codeSearchHTTPTimeout
 
 	voyage := &codesearch.Voyage{
-		APIKey:      apiKey,
+		Keys:        keys,
 		EmbedModel:  cfg.Model,
 		RerankModel: cfg.RerankModel,
 		Dimensions:  cfg.Dimensions,
@@ -212,11 +216,11 @@ func newCodeSearchWatcher(cfg config.CodeSearchConfig) *codesearch.Watcher {
 // segundo plano. Comparte credencial y proveedor con el índice de código, pero
 // usa un almacén propio: son dos búsquedas distintas y mezclarlas haría que una
 // consulta sobre código devolviera commits.
-func addCommitSearch(ctx context.Context, reg *tool.Registry, root string, cfg config.CodeSearchConfig, key string, proxy netclient.ProxySpec, stderr io.Writer) {
+func addCommitSearch(ctx context.Context, reg *tool.Registry, root string, cfg config.CodeSearchConfig, keys *codesearch.Keyring, proxy netclient.ProxySpec, stderr io.Writer) {
 	if !cfg.Commits {
 		return
 	}
-	ix, err := OpenCommitIndex(ctx, root, cfg, key, proxy)
+	ix, err := OpenCommitIndex(ctx, root, cfg, keys, proxy)
 	if err != nil {
 		fmt.Fprintf(stderr, "git_commit_search disabled: %v\n", err)
 		return
@@ -234,7 +238,7 @@ func addCommitSearch(ctx context.Context, reg *tool.Registry, root string, cfg c
 
 // OpenCommitIndex arma el índice de historia. El almacén va bajo una identidad
 // derivada de la del workspace para no pisar el índice de código.
-func OpenCommitIndex(ctx context.Context, root string, cfg config.CodeSearchConfig, apiKey string, proxy netclient.ProxySpec) (*codesearch.CommitIndex, error) {
+func OpenCommitIndex(ctx context.Context, root string, cfg config.CodeSearchConfig, keys *codesearch.Keyring, proxy netclient.ProxySpec) (*codesearch.CommitIndex, error) {
 	client, err := netclient.NewHTTPClient(proxy, netclient.TransportOptions{})
 	if err != nil {
 		client = &http.Client{}
@@ -242,7 +246,7 @@ func OpenCommitIndex(ctx context.Context, root string, cfg config.CodeSearchConf
 	client.Timeout = codeSearchHTTPTimeout
 
 	voyage := &codesearch.Voyage{
-		APIKey:      apiKey,
+		Keys:        keys,
 		EmbedModel:  cfg.Model,
 		RerankModel: cfg.RerankModel,
 		Dimensions:  cfg.Dimensions,
@@ -266,3 +270,22 @@ func OpenCommitIndex(ctx context.Context, root string, cfg config.CodeSearchConf
 // commitWorkspaceSuffix separa el índice de historia del de código dentro del
 // mismo almacén compartido.
 const commitWorkspaceSuffix = "-commits"
+
+// CodeSearchKeyring reúne las credenciales del proveedor desde el entorno. Se
+// admiten varias en la misma variable separadas por coma, y variables numeradas
+// a partir de la segunda: así, cuando una cuenta se queda sin cuota, basta con
+// dar de alta otra llave sin tocar la configuración.
+func CodeSearchKeyring(envName string) *codesearch.Keyring {
+	if envName == "" {
+		return codesearch.NewKeyring()
+	}
+	keys := codesearch.SplitKeys(os.Getenv(envName))
+	for n := 2; ; n++ {
+		raw := os.Getenv(fmt.Sprintf("%s_%d", envName, n))
+		if strings.TrimSpace(raw) == "" {
+			break
+		}
+		keys = append(keys, codesearch.SplitKeys(raw)...)
+	}
+	return codesearch.NewKeyring(keys...)
+}

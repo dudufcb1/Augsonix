@@ -274,6 +274,18 @@ dimensions = 2048
 # embedding no puede hacer. Vacío desactiva el rerank y deja el orden del coseno.
 rerank_model = "rerank-2.5"
 # La credencial nunca va en este archivo, solo el nombre de la variable.
+#
+# Se admiten VARIAS credenciales, y cuando una se queda sin cuota entra la
+# siguiente sola, sin cortar el indexado en curso. Dos formas de darlas:
+#
+#   VOYAGE_API_KEY="pa-primera,pa-segunda,pa-tercera"   (separadas por coma)
+#   VOYAGE_API_KEY=pa-primera                           (una por variable,
+#   VOYAGE_API_KEY_2=pa-segunda                          numeradas desde la 2)
+#   VOYAGE_API_KEY_3=pa-tercera
+#
+# Se usan en orden. Al agotarse una se avisa por stderr con cuantas quedan, y
+# solo cuando se acaban todas se detiene el trabajo. Una credencial agotada no
+# se recuerda entre sesiones: si repones la cuenta, vuelve a entrar sola.
 api_key_env = "VOYAGE_API_KEY"
 # Endpoint alterno compatible con la API del proveedor. Vacío usa el suyo.
 base_url = ""

@@ -9,6 +9,7 @@ import (
 
 	"github.com/BurntSushi/toml"
 
+	"reasonix/internal/codesearch"
 	"reasonix/internal/config"
 	"reasonix/internal/netclient"
 	"reasonix/internal/tool"
@@ -20,7 +21,7 @@ func TestCommitSearchStaysOutOfTheRegistryWhenDisabled(t *testing.T) {
 	// esquema no debe llegar al registro.
 	reg := tool.NewRegistry()
 	cfg := config.CodeSearchConfig{Enabled: true, Commits: false}
-	addCommitSearch(context.Background(), reg, t.TempDir(), cfg, "clave", netclient.ProxySpec{}, io.Discard)
+	addCommitSearch(context.Background(), reg, t.TempDir(), cfg, codesearch.NewKeyring("clave"), netclient.ProxySpec{}, io.Discard)
 	if _, ok := reg.Get("git_commit_search"); ok {
 		t.Error("la tool se registró con la historia desactivada")
 	}

@@ -31,7 +31,9 @@ type Voyage struct {
 	// decir cuánto costó un indexado en vez de estimarlo.
 	tokens atomic.Int64
 
-	APIKey      string
+	// Keys reparte las credenciales y retira la que se queda sin cuota, para
+	// que un indexado largo no muera cuando se acaba la primera.
+	Keys        *Keyring
 	EmbedModel  string
 	RerankModel string
 	Dimensions  int
@@ -165,45 +167,68 @@ func (v *Voyage) post(ctx context.Context, path string, body, out any) error {
 	}
 
 	var lastErr error
-	for attempt := range voyageMaxAttempts {
+	attempt, rotations := 0, 0
+	for attempt < voyageMaxAttempts {
+		key, slot, ok := v.Keys.Current()
+		if !ok {
+			return fmt.Errorf("%w: no quedan credenciales con cuota", ErrQuotaExhausted)
+		}
 		if attempt > 0 {
 			if err := sleepCtx(ctx, backoff(attempt)); err != nil {
 				return err
 			}
 		}
-		req, err := http.NewRequestWithContext(ctx, http.MethodPost, base+path, bytes.NewReader(data))
-		if err != nil {
-			return err
-		}
-		req.Header.Set("Content-Type", "application/json")
-		req.Header.Set("Authorization", "Bearer "+v.APIKey)
+		attempt++
 
-		resp, err := client.Do(req)
+		payload, status, err := v.send(ctx, client, base+path, key, data)
 		if err != nil {
 			lastErr = err
 			continue
 		}
-		payload, readErr := io.ReadAll(resp.Body)
-		resp.Body.Close()
-		if readErr != nil {
-			lastErr = readErr
-			continue
-		}
-		if resp.StatusCode == http.StatusOK {
+		if status == http.StatusOK {
 			return json.Unmarshal(payload, out)
 		}
 		detail := detailOf(payload)
-		lastErr = fmt.Errorf("voyage %s: %s: %s", path, resp.Status, detail)
-		// La cuota agotada se marca aparte: no se arregla reintentando y el
-		// usuario tiene que enterarse para reponer la cuenta.
-		if quotaExhausted(resp.StatusCode, detail) {
+		lastErr = fmt.Errorf("voyage %s: %d: %s", path, status, detail)
+		// Una credencial agotada no se arregla reintentando, pero otra sí
+		// puede seguir: rotar no consume intento ni espera, porque el fallo no
+		// fue del servidor sino de esa cuenta en particular.
+		if quotaExhausted(status, detail) {
+			if rotations < v.Keys.Len() && v.Keys.Retire(slot) {
+				rotations++
+				attempt--
+				continue
+			}
 			return fmt.Errorf("%w: %s", ErrQuotaExhausted, detail)
 		}
-		if !retryableStatus(resp.StatusCode) {
+		if !retryableStatus(status) {
 			return lastErr
 		}
 	}
 	return lastErr
+}
+
+// send hace una petición con la credencial dada y devuelve el cuerpo y el
+// código. Va aparte para que el cuerpo de la respuesta se cierre siempre, sin
+// depender de dónde salga el bucle de reintentos.
+func (v *Voyage) send(ctx context.Context, client *http.Client, url, key string, data []byte) ([]byte, int, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(data))
+	if err != nil {
+		return nil, 0, err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+key)
+
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, 0, err
+	}
+	defer resp.Body.Close()
+	payload, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, resp.StatusCode, err
+	}
+	return payload, resp.StatusCode, nil
 }
 
 func retryableStatus(code int) bool {
