@@ -77,6 +77,28 @@ func isGenerated(path string) bool {
 	return false
 }
 
+// generatedLineAverage es el promedio de caracteres por línea a partir del cual
+// un archivo se toma por salida de una herramienta. Código escrito a mano ronda
+// las decenas; un bundle o una tabla generada va en centenas o miles.
+const generatedLineAverage = 400
+
+// IndexableContent descarta lo que ya se leyó y resultó ser salida de máquina:
+// un archivo minificado se trocea a media línea, así que los rangos que
+// acompañan a un resultado no señalan lo que el bloque realmente trae. Además
+// nadie busca por significado dentro de un bundle.
+func IndexableContent(content string) bool {
+	lines := strings.Count(content, "\n") + 1
+	if len(content)/lines > generatedLineAverage {
+		return false
+	}
+	for _, line := range strings.Split(content, "\n") {
+		if len(line) > maxChunkChars {
+			return false
+		}
+	}
+	return true
+}
+
 // matcher decide qué se salta durante el recorrido: carpetas ocultas, las de
 // dependencias, y lo que diga el .gitignore de la raíz del workspace.
 type matcher struct {

@@ -36,6 +36,9 @@ type Chunk struct {
 // mismos hashes entre corridas.
 func ChunkFile(path, content string) []Chunk {
 	lines := splitLines(content)
+	if bs := boundaries(path, content); bs != nil {
+		return structuralChunks(path, lines, bs)
+	}
 	c := chunker{path: path, lines: lines}
 	for i := range lines {
 		c.appendLine(i)
@@ -134,6 +137,10 @@ func segmentHash(path string, start, end int, content string) string {
 func FileHash(content string) string {
 	sum := sha256.Sum256([]byte(content))
 	return hex.EncodeToString(sum[:])
+}
+
+func joinLines(lines []string) string {
+	return strings.Join(lines, "\n")
 }
 
 func splitLines(s string) []string {

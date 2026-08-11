@@ -148,6 +148,11 @@ func (ix *Index) syncFile(ctx context.Context, rel string) (bool, error) {
 	}
 	content := string(data)
 	hash := FileHash(content)
+	if !IndexableContent(content) {
+		ix.store.Delete(rel)
+		ix.state.Set(rel, hash)
+		return false, nil
+	}
 	// La autoridad es el store, no el estado local: es quien tiene los vectores,
 	// y su respuesta sobrevive a un reinicio a media indexación y a abrir el
 	// repositorio en otra máquina. El estado local solo acelera el arranque.
