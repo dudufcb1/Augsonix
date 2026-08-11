@@ -13,12 +13,16 @@ import (
 	"reasonix/internal/config"
 )
 
+// searchUsageLine es la ayuda del comando; vive aparte para que una prueba
+// pueda comprobar que los subcomandos siguen anunciándose.
+const searchUsageLine = "usage: reasonix codesearch <search|status [--quick]|list|reindex [--force]|clear>"
+
 // codeSearchCommand administra el índice semántico. Existe porque el índice ya
 // no vive en el proyecto: sin estos comandos no habría forma de ver qué hay
 // guardado, ni de rehacerlo cuando queda a medias.
 func codeSearchCommand(args []string) int {
 	if len(args) == 0 {
-		fmt.Fprintln(os.Stderr, "usage: reasonix codesearch <status|list|reindex [--force]|clear>")
+		fmt.Fprintln(os.Stderr, searchUsageLine)
 		return 2
 	}
 	cfg, root, err := codeSearchContext()
@@ -27,7 +31,12 @@ func codeSearchCommand(args []string) int {
 		return 1
 	}
 	switch args[0] {
+	case "search":
+		return codeSearchSearch(cfg, root, args[1:])
 	case "status":
+		if hasFlag(args[1:], "--quick") {
+			return codeSearchQuick(cfg, root)
+		}
 		return codeSearchStatus(cfg, root)
 	case "reindex":
 		return codeSearchReindex(cfg, root, hasFlag(args[1:], "--force"))
@@ -88,6 +97,23 @@ func codeSearchStatus(cfg config.CodeSearchConfig, root string) int {
 		return 0
 	}
 	fmt.Printf("indexado   %d archivos, %d fragmentos\n", files, chunks)
+	return 0
+}
+
+// codeSearchQuick responde si hay índice leyendo solo el estado en disco. Sirve
+// para un enganche de arranque, donde abrir la base costaría más de un segundo
+// en cada sesión y la mayoría de las veces solo para decir que no hay nada.
+// Sale con 1 cuando no hay índice, para poder encadenarlo en un script.
+func codeSearchQuick(cfg config.CodeSearchConfig, root string) int {
+	if !cfg.Enabled {
+		return 1
+	}
+	ws := codesearch.IdentifyWorkspace(root)
+	state, err := codesearch.LoadState(filepath.Join(config.CodeSearchIndexDir(), ws.ID))
+	if err != nil || state.Len() == 0 {
+		return 1
+	}
+	fmt.Printf("%s\t%d\n", ws.Name, state.Len())
 	return 0
 }
 
