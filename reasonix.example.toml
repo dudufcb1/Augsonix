@@ -303,6 +303,23 @@ prompt_mode = "tool"
 grep_friction = "off"
 grep_friction_limit = 3
 
+# Indexa ademas la historia del repositorio y registra git_commit_search, que
+# responde "como se hizo antes un cambio parecido" o "por que esto quedo asi".
+# El indice de codigo dice como esta el codigo ahora; este dice por que se llego
+# ahi. Se indexa el mensaje del commit, los archivos tocados y un recorte del
+# diff: no interviene ningun modelo generando descripciones.
+#
+# Gana sobre "git log --grep" cuando no recuerdas las palabras exactas, y sobre
+# todo cuando la historia mezcla idiomas: buscar "numero de seguro social"
+# encuentra un commit que dice "SSN security question".
+#
+# Cuesta cuota propia: unos 1200 tokens por commit, una sola vez. Un repositorio
+# de 200 commits ronda los 250 mil tokens de embedding.
+commits = false
+# Cuantos commits hacia atras se indexan. La historia vieja se busca poco y cada
+# commit cuesta. Cero toma el valor por defecto (1000).
+commit_limit = 0
+
 [serve]
 # Authentication for the HTTP serve frontend (reasonix serve).
 # auth_mode = "none"      # none | token | password

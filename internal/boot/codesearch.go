@@ -49,6 +49,7 @@ func addCodeSearch(ctx context.Context, reg *tool.Registry, root string, cfg con
 	if t := builtin.NewCodeSearch(ix, gate); t != nil {
 		reg.Add(t)
 	}
+	addCommitSearch(ctx, reg, root, cfg, key, proxy, stderr)
 	// Sin la cancelación heredada: el escaneo inicial sobrevive al ensamblaje,
 	// que termina mucho antes de que el índice esté al día.
 	bg := context.WithoutCancel(ctx)
@@ -206,3 +207,62 @@ func newCodeSearchWatcher(cfg config.CodeSearchConfig) *codesearch.Watcher {
 	}
 	return &codesearch.Watcher{}
 }
+
+// addCommitSearch registra la búsqueda sobre la historia y la sincroniza en
+// segundo plano. Comparte credencial y proveedor con el índice de código, pero
+// usa un almacén propio: son dos búsquedas distintas y mezclarlas haría que una
+// consulta sobre código devolviera commits.
+func addCommitSearch(ctx context.Context, reg *tool.Registry, root string, cfg config.CodeSearchConfig, key string, proxy netclient.ProxySpec, stderr io.Writer) {
+	if !cfg.Commits {
+		return
+	}
+	ix, err := OpenCommitIndex(ctx, root, cfg, key, proxy)
+	if err != nil {
+		fmt.Fprintf(stderr, "git_commit_search disabled: %v\n", err)
+		return
+	}
+	if t := builtin.NewCommitSearch(ix); t != nil {
+		reg.Add(t)
+	}
+	bg := context.WithoutCancel(ctx)
+	go func() {
+		if _, err := ix.Sync(bg, nil); err != nil && !errors.Is(err, context.Canceled) {
+			fmt.Fprintf(stderr, "commit index: %v\n", err)
+		}
+	}()
+}
+
+// OpenCommitIndex arma el índice de historia. El almacén va bajo una identidad
+// derivada de la del workspace para no pisar el índice de código.
+func OpenCommitIndex(ctx context.Context, root string, cfg config.CodeSearchConfig, apiKey string, proxy netclient.ProxySpec) (*codesearch.CommitIndex, error) {
+	client, err := netclient.NewHTTPClient(proxy, netclient.TransportOptions{})
+	if err != nil {
+		client = &http.Client{}
+	}
+	client.Timeout = codeSearchHTTPTimeout
+
+	voyage := &codesearch.Voyage{
+		APIKey:      apiKey,
+		EmbedModel:  cfg.Model,
+		RerankModel: cfg.RerankModel,
+		Dimensions:  cfg.Dimensions,
+		BaseURL:     cfg.BaseURL,
+		HTTP:        client,
+	}
+	ws := codesearch.IdentifyWorkspace(root)
+	id := ws.ID + commitWorkspaceSuffix
+	dir := filepath.Join(config.CodeSearchIndexDir(), id)
+	store, err := OpenCodeSearchStore(ctx, dir, id, ws.Name, cfg)
+	if err != nil {
+		return nil, err
+	}
+	var reranker codesearch.Reranker
+	if cfg.RerankModel != "" {
+		reranker = voyage
+	}
+	return codesearch.NewCommitIndex(root, store, voyage, reranker, cfg.CommitLimit), nil
+}
+
+// commitWorkspaceSuffix separa el índice de historia del de código dentro del
+// mismo almacén compartido.
+const commitWorkspaceSuffix = "-commits"

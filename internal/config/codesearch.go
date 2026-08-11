@@ -78,6 +78,13 @@ type CodeSearchConfig struct {
 	// Watch mantiene el índice al día mientras se trabaja, sin esperar a la
 	// siguiente sesión.
 	Watch bool `toml:"watch"`
+	// Commits indexa además la historia del repositorio, para poder buscar cómo
+	// se hizo antes un cambio parecido. Va aparte porque cuesta cuota propia y
+	// no todos los proyectos la necesitan.
+	Commits bool `toml:"commits"`
+	// CommitLimit acota cuántos commits se indexan hacia atrás. Cero toma el
+	// valor por defecto del indexador.
+	CommitLimit int `toml:"commit_limit"`
 	// GrepFriction interviene cuando el modelo encadena búsquedas de texto sin
 	// consultar el índice.
 	GrepFriction GrepFriction `toml:"grep_friction"`
