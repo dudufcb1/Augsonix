@@ -166,46 +166,58 @@ func (v *Voyage) post(ctx context.Context, path string, body, out any) error {
 		client = http.DefaultClient
 	}
 
-	var lastErr error
-	attempt, rotations := 0, 0
-	for attempt < voyageMaxAttempts {
+	// post recorre las credenciales: agota los reintentos con una y, si esa quedó
+	// inservible, repite el trabajo con la siguiente.
+	for {
 		key, slot, ok := v.Keys.Current()
 		if !ok {
 			return fmt.Errorf("%w: no quedan credenciales con cuota", ErrQuotaExhausted)
 		}
+		err, unusable := v.attemptWithKey(ctx, client, base+path, key, data, out)
+		if err == nil || !unusable {
+			return err
+		}
+		// La credencial no da más. Rotar no espera: el fallo no fue del
+		// servidor sino de esa cuenta, así que no hay nada que aguardar.
+		if !v.Keys.Retire(slot) {
+			return fmt.Errorf("%w: %v", ErrQuotaExhausted, err)
+		}
+	}
+}
+
+// attemptWithKey gasta los reintentos de una credencial. El segundo valor dice
+// si conviene probar con otra: un 429 que sobrevive a todos los reintentos ya
+// no parece una ráfaga pasajera sino una cuenta sin margen, y Voyage no
+// distingue esos dos casos —no documenta ningún código para "cuota agotada" y
+// devuelve 429 para ambos—.
+func (v *Voyage) attemptWithKey(ctx context.Context, client *http.Client, url, key string, data []byte, out any) (err error, unusable bool) {
+	var lastErr error
+	lastStatus := 0
+	for attempt := range voyageMaxAttempts {
 		if attempt > 0 {
-			if err := sleepCtx(ctx, backoff(attempt)); err != nil {
-				return err
+			if serr := sleepCtx(ctx, backoff(attempt)); serr != nil {
+				return serr, false
 			}
 		}
-		attempt++
-
-		payload, status, err := v.send(ctx, client, base+path, key, data)
-		if err != nil {
-			lastErr = err
+		payload, status, serr := v.send(ctx, client, url, key, data)
+		if serr != nil {
+			lastErr = serr
 			continue
 		}
 		if status == http.StatusOK {
-			return json.Unmarshal(payload, out)
+			return json.Unmarshal(payload, out), false
 		}
 		detail := detailOf(payload)
-		lastErr = fmt.Errorf("voyage %s: %d: %s", path, status, detail)
-		// Una credencial agotada no se arregla reintentando, pero otra sí
-		// puede seguir: rotar no consume intento ni espera, porque el fallo no
-		// fue del servidor sino de esa cuenta en particular.
-		if quotaExhausted(status, detail) {
-			if rotations < v.Keys.Len() && v.Keys.Retire(slot) {
-				rotations++
-				attempt--
-				continue
-			}
-			return fmt.Errorf("%w: %s", ErrQuotaExhausted, detail)
+		lastErr = fmt.Errorf("voyage: %d: %s", status, detail)
+		lastStatus = status
+		if keyUnusable(status, detail) {
+			return lastErr, true
 		}
 		if !retryableStatus(status) {
-			return lastErr
+			return lastErr, false
 		}
 	}
-	return lastErr
+	return lastErr, lastStatus == http.StatusTooManyRequests
 }
 
 // send hace una petición con la credencial dada y devuelve el cuerpo y el

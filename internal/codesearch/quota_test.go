@@ -8,14 +8,22 @@ import (
 	"testing"
 )
 
-func TestQuotaExhaustedRecognizesPaymentRequired(t *testing.T) {
+func TestKeyUnusableRecognizesPaymentRequired(t *testing.T) {
 	// El 402 es inequívoco: no hay con qué pagar el trabajo.
-	if !quotaExhausted(http.StatusPaymentRequired, "") {
-		t.Error("no se reconoció un 402 como cuota agotada")
+	if !keyUnusable(http.StatusPaymentRequired, "") {
+		t.Error("no se reconoció un 402 como credencial sin margen")
 	}
 }
 
-func TestQuotaExhaustedRecognizesWordings(t *testing.T) {
+func TestKeyUnusableRecognizesRejectedCredential(t *testing.T) {
+	// Una llave revocada o mal copiada no mejora reintentando: hay que probar
+	// con otra. Voyage devuelve 401 para eso.
+	if !keyUnusable(http.StatusUnauthorized, "Provided API key is invalid.") {
+		t.Error("no se reconoció un 401 como credencial inservible")
+	}
+}
+
+func TestKeyUnusableRecognizesWordings(t *testing.T) {
 	// El proveedor no promete un código fijo, así que también se leen las
 	// frases que dicen explícitamente que se acabó.
 	for _, msg := range []string{
@@ -24,20 +32,20 @@ func TestQuotaExhaustedRecognizesWordings(t *testing.T) {
 		"You have exceeded your monthly allowance",
 		"Account is out of credit",
 	} {
-		if !quotaExhausted(http.StatusBadRequest, msg) {
+		if !keyUnusable(http.StatusBadRequest, msg) {
 			t.Errorf("no se reconoció como cuota agotada: %q", msg)
 		}
 	}
 }
 
-func TestQuotaExhaustedIgnoresRateLimitNotice(t *testing.T) {
+func TestKeyUnusableIgnoresRateLimitNotice(t *testing.T) {
 	// Este es el caso que importa no confundir: el aviso de agregar método de
 	// pago acompaña al límite de tasa reducido, que sí es reintentable. Tratarlo
 	// como cuota agotada daría el índice por muerto cuando solo había que esperar.
 	notice := "You have not yet added your payment method in the billing page and will have " +
 		"reduced rate limits of 3 RPM and 10K TPM. To unlock our standard rate limits, please " +
 		"add a payment method in the billing page."
-	if quotaExhausted(http.StatusTooManyRequests, notice) {
+	if keyUnusable(http.StatusTooManyRequests, notice) {
 		t.Error("el aviso de límite de tasa se confundió con cuota agotada")
 	}
 }

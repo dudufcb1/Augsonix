@@ -192,3 +192,73 @@ func TestVoyageReportsQuotaOnlyWhenEveryKeyIsSpent(t *testing.T) {
 		t.Errorf("intentó %d veces, esperaba una por credencial: %v", len(seen), seen)
 	}
 }
+
+func TestVoyageRotatesWhenRateLimitNeverClears(t *testing.T) {
+	// El caso real de Voyage: no documenta ningún código para "cuota agotada" y
+	// devuelve 429 tanto para una ráfaga pasajera como para una cuenta sin
+	// margen. Una ráfaga cede a los pocos reintentos; una cuenta agotada no
+	// cede nunca. Cuando el 429 sobrevive a todos los reintentos hay que probar
+	// con otra credencial en vez de dar el trabajo por perdido.
+	var seen []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		key := strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
+		seen = append(seen, key)
+		if key == "sin-margen" {
+			w.WriteHeader(http.StatusTooManyRequests)
+			fmt.Fprint(w, `{"detail":"Rate limit exceeded"}`)
+			return
+		}
+		json.NewEncoder(w).Encode(map[string]any{
+			"data":  []map[string]any{{"index": 0, "embedding": []int{1, 2, 3}}},
+			"usage": map[string]int{"total_tokens": 10},
+		})
+	}))
+	t.Cleanup(srv.Close)
+	v := &Voyage{
+		Keys: NewKeyring("sin-margen", "buena"), EmbedModel: "voyage-code-3",
+		Dimensions: 3, BaseURL: srv.URL, HTTP: srv.Client(),
+	}
+	got, err := v.Embed(context.Background(), []string{"hola"}, KindDocument)
+	if err != nil {
+		t.Fatalf("no rotó ante un 429 persistente: %v", err)
+	}
+	if len(got) != 1 {
+		t.Fatalf("devolvió %d vectores", len(got))
+	}
+	if seen[len(seen)-1] != "buena" {
+		t.Errorf("la última petición usó %q, esperaba la credencial buena", seen[len(seen)-1])
+	}
+	if v.Keys.Alive() != 1 {
+		t.Errorf("quedan %d credenciales vivas, esperaba 1", v.Keys.Alive())
+	}
+}
+
+func TestVoyageDoesNotBurnKeysOnATransientRateLimit(t *testing.T) {
+	// El reverso: una ráfaga que cede al segundo intento no debe costar una
+	// credencial. Si se retirara a la primera, un pico de tráfico quemaría
+	// todas las llaves buenas en cadena.
+	calls := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		if calls == 1 {
+			w.WriteHeader(http.StatusTooManyRequests)
+			fmt.Fprint(w, `{"detail":"Rate limit exceeded"}`)
+			return
+		}
+		json.NewEncoder(w).Encode(map[string]any{
+			"data":  []map[string]any{{"index": 0, "embedding": []int{1, 2, 3}}},
+			"usage": map[string]int{"total_tokens": 10},
+		})
+	}))
+	t.Cleanup(srv.Close)
+	v := &Voyage{
+		Keys: NewKeyring("primera", "segunda"), EmbedModel: "voyage-code-3",
+		Dimensions: 3, BaseURL: srv.URL, HTTP: srv.Client(),
+	}
+	if _, err := v.Embed(context.Background(), []string{"hola"}, KindDocument); err != nil {
+		t.Fatal(err)
+	}
+	if v.Keys.Alive() != 2 {
+		t.Errorf("se retiró una credencial por una ráfaga pasajera: quedan %d de 2", v.Keys.Alive())
+	}
+}
