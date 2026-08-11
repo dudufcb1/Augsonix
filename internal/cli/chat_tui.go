@@ -2384,7 +2384,7 @@ func (m *chatTUI) streamToolOutput(id, chunk string) {
 			m.toolLineCount = 0
 		} else {
 			// Unknown id: collapse the active stream (its live count is intact).
-			m.collapseToolOutput(m.toolStreamID, "")
+			m.collapseToolOutput(m.toolStreamID, "", "")
 			m.toolStreamID = id
 			m.toolTail = m.toolTail[:0]
 			m.toolPartial = ""
@@ -2699,7 +2699,11 @@ func (m *chatTUI) printSubagentProgressScrollback(id string, sp *cliSubagentProg
 // prefix), it shows the first shellPreviewLines with a Ctrl+B hint instead.
 // No-op when id isn't streaming. resultOutput (the ToolResult's final output)
 // is the last-resort line-count source when the live state was already reset.
-func (m *chatTUI) collapseToolOutput(id, resultOutput string) {
+func (m *chatTUI) collapseToolOutput(id, name, resultOutput string) {
+	if m.showsToolOutputFor(name) {
+		m.dropToolStream(id)
+		return
+	}
 	if m.nativeScrollback {
 		if id == "" || m.toolStreamID != id {
 			return
@@ -4362,7 +4366,7 @@ func (m *chatTUI) ingestEvent(e event.Event) {
 		// collapses to a one-line "⎿ N lines" summary first. Pass the final
 		// output so collapseToolOutput has a last-resort source for the line
 		// count when the live state was already reset by a back-to-back tool.
-		m.collapseToolOutput(e.Tool.ID, e.Tool.Output)
+		m.collapseToolOutput(e.Tool.ID, e.Tool.Name, e.Tool.Output)
 		m.commitToolOutput(e.Tool)
 		if e.Tool.Name == "todo_write" && e.Tool.Err == "" {
 			m.todoArgs = e.Tool.Args
@@ -4521,7 +4525,7 @@ func (m *chatTUI) ingestEvent(e event.Event) {
 // finalizeStreamed freezes any in-progress reasoning + answer into scrollback so
 // a following event line lands after them, preserving chronological order.
 func (m *chatTUI) finalizeStreamed() {
-	m.collapseToolOutput(m.toolStreamID, "")
+	m.collapseToolOutput(m.toolStreamID, "", "")
 	m.commitReasoning()
 	m.commitPending()
 }

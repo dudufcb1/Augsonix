@@ -2,6 +2,7 @@ package cli
 
 import (
 	"fmt"
+	"strconv"
 
 	"reasonix/internal/control"
 	"reasonix/internal/i18n"
@@ -25,9 +26,9 @@ func (m chatTUI) indexStatusGroup() string {
 	return footerMetric(i18n.M.ChatStatusIndexLabel, body)
 }
 
-// indexStatusBody redacta el avance. El primer indexado de un proyecto tarda y
-// se anuncia como tal; los siguientes solo se ven si de verdad hay que embeber
-// algo, para que abrir una sesión con el índice al día no parpadee.
+// indexStatusBody redacta el avance. Con el índice al día muestra cuántos
+// chunks tiene: sin ese número no habría forma de distinguir "indexado" de "no
+// configurado", que se veían igual —vacíos— y dejaban al usuario adivinando.
 func indexStatusBody(st control.IndexStatus) string {
 	switch st.Phase {
 	case "quota":
@@ -41,6 +42,11 @@ func indexStatusBody(st control.IndexStatus) string {
 		return ""
 	case "indexing":
 		return footerInfo(indexProgressText(st))
+	case "ready":
+		if st.Chunks == 0 {
+			return ""
+		}
+		return footerValue(strconv.Itoa(st.Chunks))
 	default:
 		return ""
 	}

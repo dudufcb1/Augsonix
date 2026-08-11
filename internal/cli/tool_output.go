@@ -78,3 +78,22 @@ func (m *chatTUI) toggleToolOutput() {
 	}
 	m.notice(i18n.M.ChatToolOutputOff)
 }
+
+// showsToolOutputFor reporta si el contenido de esa herramienta se va a pintar
+// completo. Cuando sí, el resumen "⎿ N lines" sobra: diría el conteo justo
+// encima de las líneas que se están mostrando.
+func (m *chatTUI) showsToolOutputFor(name string) bool {
+	return m.showToolOutput && name != "" && !toolOutputSilent[name]
+}
+
+// dropToolStream cierra el bloque en vivo sin dejar resumen, para que el
+// contenido que viene después ocupe su lugar en vez de sumarse.
+func (m *chatTUI) dropToolStream(id string) {
+	if id != "" && m.toolStreamID == id {
+		m.toolStreamIdx = -1
+		m.toolStreamID = ""
+		m.toolTail = m.toolTail[:0]
+		m.toolPartial = ""
+		m.toolLineCount = 0
+	}
+}

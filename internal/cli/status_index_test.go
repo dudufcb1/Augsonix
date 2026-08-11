@@ -7,12 +7,21 @@ import (
 	"reasonix/internal/control"
 )
 
-func TestIndexStatusBodyHiddenWhenReady(t *testing.T) {
-	// Un índice al día no se anuncia. El indicador existe para explicar una
-	// espera, no para ocupar una ranura del pie de pantalla para siempre.
-	for _, phase := range []string{"ready", "idle"} {
-		if got := indexStatusBody(control.IndexStatus{Phase: phase, Chunks: 4000}); got != "" {
-			t.Errorf("fase %q mostró %q, esperaba nada", phase, got)
+func TestIndexStatusBodyShowsChunkCountWhenReady(t *testing.T) {
+	// Con el índice al día se muestra cuántos chunks tiene. Sin ese número,
+	// "indexado" y "no configurado" se ven igual —vacíos— y no hay forma de
+	// saber si la búsqueda semántica está funcionando.
+	got := indexStatusBody(control.IndexStatus{Phase: "ready", Chunks: 4000})
+	if !strings.Contains(got, "4000") {
+		t.Errorf("no mostró el conteo de chunks: %q", got)
+	}
+}
+
+func TestIndexStatusBodyHiddenWhenNothingIndexed(t *testing.T) {
+	// En reposo o con el índice vacío no hay nada que reportar.
+	for _, st := range []control.IndexStatus{{Phase: "idle", Chunks: 4000}, {Phase: "ready", Chunks: 0}} {
+		if got := indexStatusBody(st); got != "" {
+			t.Errorf("%+v mostró %q, esperaba nada", st, got)
 		}
 	}
 }
