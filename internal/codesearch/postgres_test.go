@@ -31,7 +31,7 @@ func TestPostgresRoundTripsChunks(t *testing.T) {
 	// Lo guardado se recupera con su ubicación intacta: de eso depende que un
 	// resultado se pueda abrir sin volver a buscarlo.
 	s := pgStore(t, "ws-roundtrip", 3)
-	if err := s.Replace("internal/auth.go", []Chunk{chunkAt("internal/auth.go", "func Authenticate() {}")}, []int8{100, 0, 0}); err != nil {
+	if err := s.Replace("internal/auth.go", "h", []Chunk{chunkAt("internal/auth.go", "func Authenticate() {}")}, []int8{100, 0, 0}); err != nil {
 		t.Fatalf("Replace: %v", err)
 	}
 	got := s.Search([]int8{100, 0, 0}, 5)
@@ -47,10 +47,10 @@ func TestPostgresRanksNearestFirst(t *testing.T) {
 	// El orden lo da la distancia coseno del índice: el vector idéntico a la
 	// consulta tiene que salir antes que el ortogonal.
 	s := pgStore(t, "ws-rank", 3)
-	if err := s.Replace("a.go", []Chunk{chunkAt("a.go", "alpha")}, []int8{100, 0, 0}); err != nil {
+	if err := s.Replace("a.go", "h", []Chunk{chunkAt("a.go", "alpha")}, []int8{100, 0, 0}); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.Replace("b.go", []Chunk{chunkAt("b.go", "beta")}, []int8{0, 100, 0}); err != nil {
+	if err := s.Replace("b.go", "h", []Chunk{chunkAt("b.go", "beta")}, []int8{0, 100, 0}); err != nil {
 		t.Fatal(err)
 	}
 	got := s.Search([]int8{100, 0, 0}, 2)
@@ -69,10 +69,10 @@ func TestPostgresReplaceSwapsFileContents(t *testing.T) {
 	// Reindexar un archivo editado sustituye sus chunks; si se acumularan, la
 	// búsqueda devolvería líneas que ya no existen en disco.
 	s := pgStore(t, "ws-replace", 2)
-	if err := s.Replace("a.go", []Chunk{chunkAt("a.go", "viejo")}, []int8{10, 0}); err != nil {
+	if err := s.Replace("a.go", "h", []Chunk{chunkAt("a.go", "viejo")}, []int8{10, 0}); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.Replace("a.go", []Chunk{chunkAt("a.go", "nuevo")}, []int8{0, 10}); err != nil {
+	if err := s.Replace("a.go", "h", []Chunk{chunkAt("a.go", "nuevo")}, []int8{0, 10}); err != nil {
 		t.Fatal(err)
 	}
 	if _, chunks := s.Stats(); chunks != 1 {
@@ -85,10 +85,10 @@ func TestPostgresKeepsWorkspacesApart(t *testing.T) {
 	// devolvería código de otro repositorio, que es peor que no devolver nada.
 	a := pgStore(t, "ws-uno", 2)
 	b := pgStore(t, "ws-dos", 2)
-	if err := a.Replace("a.go", []Chunk{chunkAt("a.go", "del proyecto uno")}, []int8{50, 50}); err != nil {
+	if err := a.Replace("a.go", "h", []Chunk{chunkAt("a.go", "del proyecto uno")}, []int8{50, 50}); err != nil {
 		t.Fatal(err)
 	}
-	if err := b.Replace("b.go", []Chunk{chunkAt("b.go", "del proyecto dos")}, []int8{50, 50}); err != nil {
+	if err := b.Replace("b.go", "h", []Chunk{chunkAt("b.go", "del proyecto dos")}, []int8{50, 50}); err != nil {
 		t.Fatal(err)
 	}
 	for _, r := range a.Search([]int8{50, 50}, 10) {
@@ -105,7 +105,7 @@ func TestPostgresDeleteRemovesFile(t *testing.T) {
 	// Un archivo borrado del disco sale del índice, o la búsqueda seguiría
 	// proponiendo rutas que ya no existen.
 	s := pgStore(t, "ws-delete", 2)
-	if err := s.Replace("a.go", []Chunk{chunkAt("a.go", "x")}, []int8{10, 10}); err != nil {
+	if err := s.Replace("a.go", "h", []Chunk{chunkAt("a.go", "x")}, []int8{10, 10}); err != nil {
 		t.Fatal(err)
 	}
 	s.Delete("a.go")
@@ -118,7 +118,7 @@ func TestPostgresRejectsMismatchedVectorCount(t *testing.T) {
 	// Un desajuste significa que la respuesta del embebedor vino incompleta:
 	// mejor error que un índice desalineado.
 	s := pgStore(t, "ws-mismatch", 4)
-	err := s.Replace("a.go", []Chunk{chunkAt("a.go", "x"), chunkAt("a.go", "y")}, []int8{1, 2, 3, 4})
+	err := s.Replace("a.go", "h", []Chunk{chunkAt("a.go", "x"), chunkAt("a.go", "y")}, []int8{1, 2, 3, 4})
 	if err == nil {
 		t.Error("aceptó una cantidad de valores incorrecta")
 	}
@@ -132,7 +132,7 @@ func TestPostgresSupports2048Dimensions(t *testing.T) {
 	for i := range vec {
 		vec[i] = int8(i % 100)
 	}
-	if err := s.Replace("big.go", []Chunk{chunkAt("big.go", "vector grande")}, vec); err != nil {
+	if err := s.Replace("big.go", "h", []Chunk{chunkAt("big.go", "vector grande")}, vec); err != nil {
 		t.Fatalf("Replace con 2048 dimensiones: %v", err)
 	}
 	if got := s.Search(vec, 1); len(got) != 1 {

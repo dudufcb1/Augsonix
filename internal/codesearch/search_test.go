@@ -47,7 +47,7 @@ func indexWithChunks(t *testing.T, rr Reranker, paths ...string) *Index {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if err := store.Replace(p, []Chunk{chunkAt(p, p)}, vecs[0]); err != nil {
+		if err := store.Replace(p, "h", []Chunk{chunkAt(p, p)}, vecs[0]); err != nil {
 			t.Fatal(err)
 		}
 	}

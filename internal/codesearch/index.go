@@ -9,6 +9,10 @@ import (
 	"sync"
 )
 
+// indexCheckpointFiles es cada cuántos archivos embebidos se vuelca lo hecho,
+// para que una interrupción cueste unos pocos archivos y no la indexación entera.
+const indexCheckpointFiles = 25
+
 // Index mantiene el índice semántico de un workspace al día. Reindexa solo lo
 // que cambió: embeber es lo caro, tanto en cuota como en tiempo.
 type Index struct {
@@ -91,6 +95,13 @@ func (ix *Index) Sync(ctx context.Context, onProgress func(Progress)) (Stats, er
 		default:
 			st.Unchanged++
 		}
+		// Volcar cada tantos archivos: sin esto, cerrar a media indexación tira el
+		// progreso del almacén local y el siguiente arranque vuelve a embeberlo
+		// todo. Postgres ya confirma cada archivo en su transacción.
+		if st.Embedded > 0 && st.Embedded%indexCheckpointFiles == 0 && changed {
+			_ = ix.store.Save()
+			_ = ix.state.Save()
+		}
 		ix.progress.set(func(s *Status) {
 			s.Done, s.Embedded = i+1, st.Embedded
 			// Solo cuenta como indexado cuando de verdad se esta embebiendo;
@@ -137,9 +148,11 @@ func (ix *Index) syncFile(ctx context.Context, rel string) (bool, error) {
 	}
 	content := string(data)
 	hash := FileHash(content)
-	// El store también tiene que tenerlo: si el índice se borró pero el estado
-	// sobrevivió, saltarse el archivo lo dejaría fuera para siempre.
-	if ix.state.Unchanged(rel, hash) && ix.store.Has(rel) {
+	// La autoridad es el store, no el estado local: es quien tiene los vectores,
+	// y su respuesta sobrevive a un reinicio a media indexación y a abrir el
+	// repositorio en otra máquina. El estado local solo acelera el arranque.
+	if indexed, ok := ix.store.FileHash(rel); ok && indexed == hash {
+		ix.state.Set(rel, hash)
 		return false, nil
 	}
 
@@ -163,7 +176,7 @@ func (ix *Index) syncFile(ctx context.Context, rel string) (bool, error) {
 	for _, v := range vecs {
 		flat = append(flat, v...)
 	}
-	if err := ix.store.Replace(rel, chunks, flat); err != nil {
+	if err := ix.store.Replace(rel, hash, chunks, flat); err != nil {
 		return false, err
 	}
 	ix.state.Set(rel, hash)

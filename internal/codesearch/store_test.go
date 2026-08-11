@@ -15,10 +15,10 @@ func TestStoreSearchRanksNearestVectorFirst(t *testing.T) {
 	// La búsqueda ordena por similitud coseno: el vector idéntico a la consulta
 	// tiene que salir antes que uno ortogonal.
 	s, _ := OpenLocalStore(t.TempDir(), "test-model", 3)
-	if err := s.Replace("a.go", []Chunk{chunkAt("a.go", "alpha")}, []int8{100, 0, 0}); err != nil {
+	if err := s.Replace("a.go", "h", []Chunk{chunkAt("a.go", "alpha")}, []int8{100, 0, 0}); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.Replace("b.go", []Chunk{chunkAt("b.go", "beta")}, []int8{0, 100, 0}); err != nil {
+	if err := s.Replace("b.go", "h", []Chunk{chunkAt("b.go", "beta")}, []int8{0, 100, 0}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -39,7 +39,7 @@ func TestStoreSearchRespectsLimit(t *testing.T) {
 	// sí cuesta dinero por documento.
 	s, _ := OpenLocalStore(t.TempDir(), "test-model", 2)
 	for _, p := range []string{"a.go", "b.go", "c.go"} {
-		if err := s.Replace(p, []Chunk{chunkAt(p, p)}, []int8{50, 50}); err != nil {
+		if err := s.Replace(p, "h", []Chunk{chunkAt(p, p)}, []int8{50, 50}); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -52,10 +52,10 @@ func TestStoreReplaceSwapsFileContents(t *testing.T) {
 	// Reindexar un archivo editado sustituye sus chunks; si se acumularan,
 	// la búsqueda devolvería líneas que ya no existen en disco.
 	s, _ := OpenLocalStore(t.TempDir(), "test-model", 2)
-	if err := s.Replace("a.go", []Chunk{chunkAt("a.go", "viejo")}, []int8{10, 0}); err != nil {
+	if err := s.Replace("a.go", "h", []Chunk{chunkAt("a.go", "viejo")}, []int8{10, 0}); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.Replace("a.go", []Chunk{chunkAt("a.go", "nuevo")}, []int8{0, 10}); err != nil {
+	if err := s.Replace("a.go", "h", []Chunk{chunkAt("a.go", "nuevo")}, []int8{0, 10}); err != nil {
 		t.Fatal(err)
 	}
 	_, chunks := s.Stats()
@@ -71,7 +71,7 @@ func TestStoreReplaceRejectsMismatchedVectorCount(t *testing.T) {
 	// Un desajuste entre chunks y valores significa que la respuesta del
 	// embebedor vino incompleta: mejor error que un índice desalineado.
 	s, _ := OpenLocalStore(t.TempDir(), "test-model", 4)
-	err := s.Replace("a.go", []Chunk{chunkAt("a.go", "x"), chunkAt("a.go", "y")}, []int8{1, 2, 3, 4})
+	err := s.Replace("a.go", "h", []Chunk{chunkAt("a.go", "x"), chunkAt("a.go", "y")}, []int8{1, 2, 3, 4})
 	if err == nil {
 		t.Error("esperaba error por cantidad de valores incorrecta")
 	}
@@ -81,7 +81,7 @@ func TestStoreDeleteRemovesFile(t *testing.T) {
 	// Un archivo borrado del workspace sale del índice, o la búsqueda seguiría
 	// proponiendo rutas que ya no existen.
 	s, _ := OpenLocalStore(t.TempDir(), "test-model", 2)
-	if err := s.Replace("a.go", []Chunk{chunkAt("a.go", "x")}, []int8{10, 10}); err != nil {
+	if err := s.Replace("a.go", "h", []Chunk{chunkAt("a.go", "x")}, []int8{10, 10}); err != nil {
 		t.Fatal(err)
 	}
 	s.Delete("a.go")
@@ -98,10 +98,10 @@ func TestStoreRoundTripsThroughDisk(t *testing.T) {
 	// que arrancar una sesión nueva no vuelva a embeber el repo completo.
 	dir := t.TempDir()
 	s, _ := OpenLocalStore(dir, "test-model", 3)
-	if err := s.Replace("a.go", []Chunk{chunkAt("a.go", "alpha"), chunkAt("a.go", "beta")}, []int8{100, 0, 0, 0, 100, 0}); err != nil {
+	if err := s.Replace("a.go", "h", []Chunk{chunkAt("a.go", "alpha"), chunkAt("a.go", "beta")}, []int8{100, 0, 0, 0, 100, 0}); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.Replace("b.go", []Chunk{chunkAt("b.go", "gamma")}, []int8{0, 0, 100}); err != nil {
+	if err := s.Replace("b.go", "h", []Chunk{chunkAt("b.go", "gamma")}, []int8{0, 0, 100}); err != nil {
 		t.Fatal(err)
 	}
 	if err := s.Save(); err != nil {
@@ -124,7 +124,7 @@ func TestOpenLocalStoreDiscardsIndexFromAnotherModel(t *testing.T) {
 	// tiene que empezar de cero en vez de mezclar espacios vectoriales.
 	dir := t.TempDir()
 	s, _ := OpenLocalStore(dir, "voyage-code-3", 3)
-	if err := s.Replace("a.go", []Chunk{chunkAt("a.go", "x")}, []int8{1, 2, 3}); err != nil {
+	if err := s.Replace("a.go", "h", []Chunk{chunkAt("a.go", "x")}, []int8{1, 2, 3}); err != nil {
 		t.Fatal(err)
 	}
 	if err := s.Save(); err != nil {
@@ -142,7 +142,7 @@ func TestOpenLocalStoreDiscardsIndexWithOtherDimension(t *testing.T) {
 	// modelo: los vectores guardados ya no encajan con los nuevos.
 	dir := t.TempDir()
 	s, _ := OpenLocalStore(dir, "voyage-code-3", 3)
-	if err := s.Replace("a.go", []Chunk{chunkAt("a.go", "x")}, []int8{1, 2, 3}); err != nil {
+	if err := s.Replace("a.go", "h", []Chunk{chunkAt("a.go", "x")}, []int8{1, 2, 3}); err != nil {
 		t.Fatal(err)
 	}
 	if err := s.Save(); err != nil {
@@ -160,7 +160,7 @@ func TestOpenLocalStoreDiscardsTruncatedVectors(t *testing.T) {
 	// corto: hay que reindexar en vez de servir chunks con vectores ajenos.
 	dir := t.TempDir()
 	s, _ := OpenLocalStore(dir, "test-model", 3)
-	if err := s.Replace("a.go", []Chunk{chunkAt("a.go", "x"), chunkAt("a.go", "y")}, []int8{1, 2, 3, 4, 5, 6}); err != nil {
+	if err := s.Replace("a.go", "h", []Chunk{chunkAt("a.go", "x"), chunkAt("a.go", "y")}, []int8{1, 2, 3, 4, 5, 6}); err != nil {
 		t.Fatal(err)
 	}
 	if err := s.Save(); err != nil {

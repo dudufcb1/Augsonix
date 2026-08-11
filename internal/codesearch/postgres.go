@@ -62,9 +62,11 @@ func (s *PostgresStore) migrate(ctx context.Context) error {
 			end_line   int  NOT NULL,
 			content    text NOT NULL,
 			model      text NOT NULL,
+			file_hash  text NOT NULL DEFAULT '',
 			embedding  vector(%d) NOT NULL,
 			PRIMARY KEY (workspace, path, chunk_hash)
 		)`, s.table, s.dims),
+		fmt.Sprintf(`ALTER TABLE %s ADD COLUMN IF NOT EXISTS file_hash text NOT NULL DEFAULT ''`, s.table),
 		fmt.Sprintf(`CREATE INDEX IF NOT EXISTS %s_ws ON %s (workspace, path)`, s.table, s.table),
 		fmt.Sprintf(`CREATE INDEX IF NOT EXISTS %s_hnsw ON %s
 			USING hnsw ((embedding::halfvec(%d)) halfvec_cosine_ops)`, s.table, s.table, s.dims),
@@ -86,7 +88,7 @@ func (s *PostgresStore) Dims() int { return s.dims }
 // Replace deja el archivo con exactamente esos chunks, en una transacción: si
 // se cayera a la mitad, el archivo quedaría sin sus vectores y la búsqueda
 // dejaría de encontrarlo sin que nadie se entere.
-func (s *PostgresStore) Replace(path string, chunks []Chunk, vecs []int8) error {
+func (s *PostgresStore) Replace(path, fileHash string, chunks []Chunk, vecs []int8) error {
 	if len(chunks)*s.dims != len(vecs) {
 		return fmt.Errorf("codesearch: %d chunks piden %d valores, llegaron %d", len(chunks), len(chunks)*s.dims, len(vecs))
 	}
@@ -101,19 +103,34 @@ func (s *PostgresStore) Replace(path string, chunks []Chunk, vecs []int8) error 
 		return err
 	}
 	insert := fmt.Sprintf(`INSERT INTO %s
-		(workspace, path, chunk_hash, start_line, end_line, content, model, embedding)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
+		(workspace, path, chunk_hash, start_line, end_line, content, model, embedding, file_hash)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
 		ON CONFLICT (workspace, path, chunk_hash) DO UPDATE
 		SET start_line=EXCLUDED.start_line, end_line=EXCLUDED.end_line,
-		    content=EXCLUDED.content, embedding=EXCLUDED.embedding`, s.table)
+		    content=EXCLUDED.content, embedding=EXCLUDED.embedding,
+		    file_hash=EXCLUDED.file_hash`, s.table)
 	for i, c := range chunks {
 		vec := vecs[i*s.dims : (i+1)*s.dims]
 		if _, err := tx.Exec(ctx, insert, s.workspace, c.Path, c.Hash,
-			c.StartLine, c.EndLine, c.Content, s.model, encodeVector(vec)); err != nil {
+			c.StartLine, c.EndLine, c.Content, s.model, encodeVector(vec), fileHash); err != nil {
 			return err
 		}
 	}
 	return tx.Commit(ctx)
+}
+
+// FileHash devuelve con qué contenido se indexó un archivo. Vive en la base y
+// no en un archivo local: así reanudar una indexación interrumpida, o abrir el
+// repositorio en otra máquina, no vuelve a embeber lo que ya está guardado.
+func (s *PostgresStore) FileHash(path string) (string, bool) {
+	var h string
+	err := s.pool.QueryRow(context.Background(),
+		fmt.Sprintf(`SELECT file_hash FROM %s WHERE workspace=$1 AND path=$2 LIMIT 1`, s.table),
+		s.workspace, path).Scan(&h)
+	if err != nil || h == "" {
+		return "", false
+	}
+	return h, true
 }
 
 // Delete saca del índice todo lo que venía de un archivo.

@@ -7,8 +7,13 @@ package codesearch
 // workspace y siempre con separador "/", para que el índice sea portable.
 type VectorStore interface {
 	// Replace deja el archivo con exactamente esos chunks y vectores. vecs
-	// viene concatenado: Dims() valores por chunk.
-	Replace(path string, chunks []Chunk, vecs []int8) error
+	// viene concatenado: Dims() valores por chunk. fileHash queda guardado junto
+	// a ellos para poder saltarse el archivo si no cambió.
+	Replace(path, fileHash string, chunks []Chunk, vecs []int8) error
+	// FileHash devuelve con qué contenido se indexó un archivo. Que lo sepa el
+	// store y no un archivo aparte es lo que evita re-embeber —y volver a
+	// cobrar— tras una indexación interrumpida o en otra máquina.
+	FileHash(path string) (string, bool)
 	// Delete saca del índice todo lo que venía de un archivo.
 	Delete(path string)
 	// Has reporta si un archivo tiene chunks en el índice.

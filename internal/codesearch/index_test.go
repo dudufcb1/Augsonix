@@ -241,3 +241,56 @@ func TestSyncRebuildsWhenIndexLostButStateSurvived(t *testing.T) {
 		t.Errorf("Embedded = %d, esperaba reconstruir el archivo faltante", st.Embedded)
 	}
 }
+
+func TestSyncResumesFromStoreAfterLosingLocalState(t *testing.T) {
+	// El caso real: se corta la indexación de un repositorio grande y al
+	// reiniciar el estado local no está. Como el store recuerda con qué
+	// contenido indexó cada archivo, lo ya embebido no se vuelve a pagar.
+	ix, root, emb := newTestIndex(t)
+	for _, n := range []string{"a.go", "b.go", "c.go"} {
+		writeFile(t, root, n, body(n))
+	}
+	if _, err := ix.Sync(context.Background(), nil); err != nil {
+		t.Fatal(err)
+	}
+	callsAfterFirst := emb.callCount()
+
+	// Estado local perdido; el store intacto, como tras un cierre a media faena.
+	fresh, err := LoadState(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	ix.state = fresh
+
+	st, err := ix.Sync(context.Background(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if st.Embedded != 0 {
+		t.Errorf("re-embebió %d archivos que el store ya tenía", st.Embedded)
+	}
+	if emb.callCount() != callsAfterFirst {
+		t.Errorf("se pagaron %d llamadas de más al proveedor", emb.callCount()-callsAfterFirst)
+	}
+}
+
+func TestSyncReembedsWhenStoreHashIsStale(t *testing.T) {
+	// Y si el archivo cambió desde que se indexó, el hash guardado no coincide
+	// y sí hay que rehacerlo: la optimización no puede dejar el índice viejo.
+	ix, root, _ := newTestIndex(t)
+	writeFile(t, root, "a.go", body("original"))
+	if _, err := ix.Sync(context.Background(), nil); err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, root, "a.go", body("editado"))
+	fresh, _ := LoadState(t.TempDir())
+	ix.state = fresh
+
+	st, err := ix.Sync(context.Background(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if st.Embedded != 1 {
+		t.Errorf("Embedded = %d, el archivo cambió y debía reindexarse", st.Embedded)
+	}
+}

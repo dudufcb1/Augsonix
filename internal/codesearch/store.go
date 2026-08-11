@@ -37,6 +37,9 @@ type LocalStore struct {
 // fileVectors son los chunks de un archivo con sus vectores concatenados, así
 // que reindexar un archivo es reemplazar una entrada y no recompactar todo.
 type fileVectors struct {
+	// Hash es el contenido con que se indexó el archivo, guardado junto a sus
+	// vectores para poder saltárselo sin depender de un archivo de estado aparte.
+	Hash   string    `json:"hash"`
 	Chunks []Chunk   `json:"chunks"`
 	vecs   []int8    // len == len(Chunks)*dims
 	norms  []float32 // norma de cada vector, para el coseno
@@ -49,10 +52,11 @@ type Match struct {
 }
 
 type indexManifest struct {
-	Dims  int                `json:"dims"`
-	Model string             `json:"model"`
-	Files map[string][]Chunk `json:"files"`
-	Order []string           `json:"order"`
+	Dims   int                `json:"dims"`
+	Model  string             `json:"model"`
+	Files  map[string][]Chunk `json:"files"`
+	Hashes map[string]string  `json:"hashes"`
+	Order  []string           `json:"order"`
 }
 
 // OpenStore carga el índice de dir. Si no existe, o si fue construido con otro
@@ -91,7 +95,7 @@ func (s *LocalStore) load(man indexManifest, raw []byte) error {
 		if offset+width > len(raw) {
 			return fmt.Errorf("vectors.bin truncado en %s", path)
 		}
-		fv := &fileVectors{Chunks: chunks, vecs: bytesToInt8(raw[offset : offset+width])}
+		fv := &fileVectors{Hash: man.Hashes[path], Chunks: chunks, vecs: bytesToInt8(raw[offset : offset+width])}
 		fv.recomputeNorms(s.dims)
 		s.files[path] = fv
 		offset += width
@@ -101,7 +105,7 @@ func (s *LocalStore) load(man indexManifest, raw []byte) error {
 
 // Replace deja el archivo con exactamente esos chunks y vectores, quitando lo
 // que tuviera antes. vecs viene concatenado: dims valores por chunk.
-func (s *LocalStore) Replace(path string, chunks []Chunk, vecs []int8) error {
+func (s *LocalStore) Replace(path, fileHash string, chunks []Chunk, vecs []int8) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -112,10 +116,21 @@ func (s *LocalStore) Replace(path string, chunks []Chunk, vecs []int8) error {
 		delete(s.files, path)
 		return nil
 	}
-	fv := &fileVectors{Chunks: chunks, vecs: vecs}
+	fv := &fileVectors{Hash: fileHash, Chunks: chunks, vecs: vecs}
 	fv.recomputeNorms(s.dims)
 	s.files[path] = fv
 	return nil
+}
+
+// FileHash devuelve con qué contenido se indexó un archivo.
+func (s *LocalStore) FileHash(path string) (string, bool) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	fv, ok := s.files[path]
+	if !ok || fv.Hash == "" {
+		return "", false
+	}
+	return fv.Hash, true
 }
 
 // Delete saca del índice todo lo que venía de un archivo.
@@ -199,11 +214,12 @@ func (s *LocalStore) Save() error {
 	}
 	s.mu.RLock()
 	order := s.pathsLocked()
-	man := indexManifest{Dims: s.dims, Model: s.model, Files: map[string][]Chunk{}, Order: order}
+	man := indexManifest{Dims: s.dims, Model: s.model, Files: map[string][]Chunk{}, Hashes: map[string]string{}, Order: order}
 	var blob []byte
 	for _, path := range order {
 		fv := s.files[path]
 		man.Files[path] = fv.Chunks
+		man.Hashes[path] = fv.Hash
 		blob = append(blob, int8ToBytes(fv.vecs)...)
 	}
 	s.mu.RUnlock()
