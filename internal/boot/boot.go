@@ -226,9 +226,8 @@ func build(ctx context.Context, opts Options) (*BuildResult, error) {
 	if err != nil {
 		return nil, err
 	}
-	// One-time import of v1/v0.5 legacy config — runs before Load so the freshly
-	// written config + ~/.env are picked up this same boot. CLI Run also calls this
-	// before config-only commands; this call stays as the shared frontend fallback.
+	// One-time import of v1/v0.5 legacy config, before Load so the freshly written
+	// config + ~/.env are picked up this same boot. CLI Run also calls it first.
 	migrated, migErr := config.MigrateLegacyIfNeededForRoot(root)
 	stepLimitsMigrated, stepLimitMigErr := config.MigrateLegacyAgentStepLimitsForRoot(root)
 	redactToolOutputMigrated, redactToolOutputMigErr := config.MigrateLegacyRedactToolOutputForRoot(root)
@@ -585,6 +584,7 @@ func build(ctx context.Context, opts Options) (*BuildResult, error) {
 		}
 	}
 	sysPrompt = appendOfflineEnvironmentNote(sysPrompt, cfg.Environment.Offline)
+	sysPrompt = appendCodeSearchGuidance(sysPrompt, cfg.CodeSearch, launchWD)
 
 	// Persistent memory (REASONIX.md / AGENTS.md hierarchy + auto-memory index)
 	// folds into the system prompt exactly here, once: it becomes part of the
@@ -681,12 +681,12 @@ func build(ctx context.Context, opts Options) (*BuildResult, error) {
 	if sessionTemp == nil {
 		sessionTemp = sessiontemp.New()
 	}
-	// An explicit Economy allowlist can contain only on-demand tools, leaving no
-	// startup built-ins. Do not pass that filtered empty slice to addBuiltins,
-	// where an empty list intentionally means "all built-ins".
+	// An Economy allowlist can leave no startup built-ins; do not pass that
+	// filtered empty slice to addBuiltins, where empty means "all built-ins".
 	if !tokenEconomy || len(cfg.Tools.Enabled) == 0 || len(enabledBuiltins) > 0 {
 		addBuiltins(reg, enabledBuiltins, writeRoots, bashSpec, bashTimeout, searchSpec, stderr, launchWD, proxySpec, forbidReadRoots, readPathResolver, sessionGuard, managedConfig, opts.FileOverlay, opts.TerminalRunner, sessionTemp, fileWriteReceipt)
 	}
+	addCodeSearch(ctx, reg, launchWD, cfg.CodeSearch, proxySpec, stderr)
 	// Use the caller-supplied shared host when set, so controllers for the same
 	// workspace root reuse running MCP processes (e.g. one CodeGraph daemon
 	// instead of one per tab). Otherwise construct a private host per controller.
