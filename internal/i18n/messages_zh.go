@@ -553,6 +553,7 @@ var Chinese = Messages{
   reasonix config telemetry [auto|on|off]                配置不含内容的 CLI 使用统计
   reasonix report [list|show|send|delete] [ID]           审阅并明确发送本地 CLI 崩溃报告
   reasonix mcp <add|remove|list|import>                 管理 reasonix.toml 里的 MCP 服务器
+  reasonix codesearch <search|status|reindex|list|clear>  对本工作区的代码与提交历史做语义检索
   reasonix subagent <list|create|edit|delete|try|run>   管理和运行隔离子智能体 profile
   reasonix init                                         查看如何生成项目记忆（AGENTS.md）
   reasonix doctor [--json]                              输出脱敏的本地诊断信息
