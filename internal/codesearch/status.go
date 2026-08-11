@@ -17,6 +17,9 @@ const (
 	PhaseReady Phase = "ready"
 	// PhaseFailed guarda el error para poder explicarlo en vez de quedarse mudo.
 	PhaseFailed Phase = "failed"
+	// PhaseQuota es el caso que hay que poder distinguir de un vistazo: no es
+	// un fallo pasajero, es que se acabó la cuota y toca reponer la cuenta.
+	PhaseQuota Phase = "quota"
 )
 
 // Status es una foto del avance, copiable y segura de leer desde otra goroutine.

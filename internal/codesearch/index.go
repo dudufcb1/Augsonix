@@ -2,6 +2,7 @@ package codesearch
 
 import (
 	"context"
+	"errors"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -78,6 +79,11 @@ func (ix *Index) Sync(ctx context.Context, onProgress func(Progress)) (Stats, er
 
 		changed, err := ix.syncFile(ctx, f)
 		switch {
+		case errors.Is(err, ErrQuotaExhausted):
+			// Sin cuota no hay nada que hacer con los archivos que faltan:
+			// seguir solo acumularía el mismo error miles de veces.
+			ix.fail(err)
+			return st, err
 		case err != nil:
 			continue // un archivo ilegible no debe abortar el escaneo completo
 		case changed:
@@ -219,5 +225,9 @@ func (ix *Index) Ready() (int, bool) {
 // fail deja el error a la vista en vez de que el índice se quede callado y la
 // interfaz muestre un escaneo que nunca termina.
 func (ix *Index) fail(err error) {
-	ix.progress.set(func(s *Status) { s.Phase, s.Err = PhaseFailed, err })
+	phase := PhaseFailed
+	if errors.Is(err, ErrQuotaExhausted) {
+		phase = PhaseQuota
+	}
+	ix.progress.set(func(s *Status) { s.Phase, s.Err = phase, err })
 }

@@ -7,7 +7,7 @@ import "sync"
 // de vectores: la TUI, el servidor HTTP y el escritorio pintan lo mismo sin
 // saber quién indexa.
 type IndexStatus struct {
-	// Phase es "idle", "scanning", "indexing", "ready" o "failed".
+	// Phase es "idle", "scanning", "indexing", "ready", "failed" o "quota".
 	Phase string
 	// Done y Total cuentan archivos, la unidad que el usuario reconoce.
 	Done, Total int

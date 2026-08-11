@@ -186,7 +186,13 @@ func (v *Voyage) post(ctx context.Context, path string, body, out any) error {
 		if resp.StatusCode == http.StatusOK {
 			return json.Unmarshal(payload, out)
 		}
-		lastErr = fmt.Errorf("voyage %s: %s: %s", path, resp.Status, detailOf(payload))
+		detail := detailOf(payload)
+		lastErr = fmt.Errorf("voyage %s: %s: %s", path, resp.Status, detail)
+		// La cuota agotada se marca aparte: no se arregla reintentando y el
+		// usuario tiene que enterarse para reponer la cuenta.
+		if quotaExhausted(resp.StatusCode, detail) {
+			return fmt.Errorf("%w: %s", ErrQuotaExhausted, detail)
+		}
 		if !retryableStatus(resp.StatusCode) {
 			return lastErr
 		}

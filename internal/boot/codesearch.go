@@ -2,6 +2,7 @@ package boot
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -101,6 +102,12 @@ func syncCodeSearch(ctx context.Context, ix *codesearch.Index, stderr io.Writer)
 	}
 	go func() {
 		st, err := ix.Sync(ctx, nil)
+		if errors.Is(err, codesearch.ErrQuotaExhausted) {
+			// Sin cuota el índice deja de crecer, y eso hay que decirlo fuerte:
+			// si no, la búsqueda simplemente empeora sin explicación.
+			fmt.Fprintf(stderr, "code_search: se agotó la cuota del proveedor; el índice quedó incompleto. %v\n", err)
+			return
+		}
 		if err != nil {
 			fmt.Fprintf(stderr, "code_search index sync: %v\n", err)
 			return

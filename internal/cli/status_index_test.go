@@ -62,3 +62,17 @@ func TestIndexStatusBodyShowsFailure(t *testing.T) {
 		t.Error("un fallo del índice no se reportó en el pie de pantalla")
 	}
 }
+
+func TestIndexStatusBodyDistinguishesQuotaFromFailure(t *testing.T) {
+	// La cuota agotada y un fallo cualquiera piden acciones distintas: una se
+	// arregla reponiendo la cuenta y el otro esperando o revisando la red. Si
+	// se vieran igual, el usuario no sabría cuál de las dos le tocó.
+	quota := indexStatusBody(control.IndexStatus{Phase: "quota"})
+	failed := indexStatusBody(control.IndexStatus{Phase: "failed"})
+	if quota == "" {
+		t.Fatal("la cuota agotada no se reportó")
+	}
+	if quota == failed {
+		t.Error("la cuota agotada se ve igual que un fallo cualquiera")
+	}
+}

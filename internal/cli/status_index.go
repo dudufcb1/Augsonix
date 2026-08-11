@@ -30,6 +30,8 @@ func (m chatTUI) indexStatusGroup() string {
 // algo, para que abrir una sesión con el índice al día no parpadee.
 func indexStatusBody(st control.IndexStatus) string {
 	switch st.Phase {
+	case "quota":
+		return themeFg(activeCLITheme.danger, i18n.M.ChatStatusIndexQuota)
 	case "failed":
 		return themeFg(activeCLITheme.danger, i18n.M.ChatStatusIndexFailed)
 	case "scanning":
