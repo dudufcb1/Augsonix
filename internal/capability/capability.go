@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+	"unicode"
+	"unicode/utf8"
 
 	"reasonix/internal/skill"
 	"reasonix/internal/tool"
@@ -309,7 +311,7 @@ func routeEntry(text string, e Entry) (AutoUse, string, bool) {
 
 func explicitSkill(text, name string) bool {
 	n := normalize(name)
-	return strings.Contains(text, "/"+n) ||
+	return slashCommand(text, n) ||
 		strings.Contains(text, "use "+n+" skill") ||
 		strings.Contains(text, "using "+n+" skill") ||
 		strings.Contains(text, "使用 "+n+" skill") ||
@@ -358,6 +360,51 @@ func containsAny(s string, terms []string) bool {
 		}
 	}
 	return false
+}
+
+// slashCommand reports whether text invokes "/name" as a command rather than
+// merely containing it. A file path names no capability: "backend/tests/" must
+// not read as the user asking for the built-in test skill.
+func slashCommand(text, name string) bool {
+	if name == "" {
+		return false
+	}
+	token := "/" + name
+	for i := 0; i <= len(text)-len(token); {
+		j := strings.Index(text[i:], token)
+		if j < 0 {
+			return false
+		}
+		at := i + j
+		if slashCommandStart(text, at) && slashCommandEnd(text, at+len(token)) {
+			return true
+		}
+		i = at + len(token)
+	}
+	return false
+}
+
+// slashCommandStart requires the slash to open a word: inside "backend/tests"
+// it continues a path segment instead.
+func slashCommandStart(text string, at int) bool {
+	if at == 0 {
+		return true
+	}
+	r, _ := utf8.DecodeLastRuneInString(text[:at])
+	return unicode.IsSpace(r) || r == '(' || r == '[' || r == '"' || r == '\''
+}
+
+// slashCommandEnd requires the name to end there: a following word character or
+// path punctuation means the match was a longer token.
+func slashCommandEnd(text string, at int) bool {
+	if at >= len(text) {
+		return true
+	}
+	r, _ := utf8.DecodeRuneInString(text[at:])
+	if unicode.IsLetter(r) || unicode.IsDigit(r) {
+		return false
+	}
+	return r != '/' && r != '-' && r != '_' && r != '.'
 }
 
 func normalize(s string) string {

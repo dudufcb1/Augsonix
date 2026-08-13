@@ -161,3 +161,45 @@ func TestRenderTransientBlockMentionsConnectSource(t *testing.T) {
 		}
 	}
 }
+
+func TestRouteIgnoresSkillNameInsideAPath(t *testing.T) {
+	entries := SkillEntries([]skill.Skill{{
+		Name:        "test",
+		Description: "run the project's test suite",
+		Scope:       skill.ScopeBuiltin,
+		AutoUse:     "suggest",
+	}}, []tool.ContractEntry{{Name: "run_skill"}})
+
+	for _, input := range []string{
+		`Escribir "no toques nada fuera de backend/tests/" en un encargo`,
+		"review the diff touching src/test/helpers.go",
+		"the fixture lives in frontend/tests/setup.ts",
+	} {
+		for _, c := range Route(input, entries).Candidates {
+			if c.Policy == AutoUseRequire {
+				t.Fatalf("%q: policy = require (%s); a path segment is not a slash command", input, c.Reason)
+			}
+		}
+	}
+}
+
+func TestRouteStillHonorsAnExplicitSlashCommand(t *testing.T) {
+	entries := SkillEntries([]skill.Skill{{
+		Name:        "test",
+		Description: "run the project's test suite",
+		Scope:       skill.ScopeBuiltin,
+		AutoUse:     "suggest",
+	}}, []tool.ContractEntry{{Name: "run_skill"}})
+
+	for _, input := range []string{"/test", "corre /test y reporta", "usa (/test)"} {
+		var required bool
+		for _, c := range Route(input, entries).Candidates {
+			if c.Policy == AutoUseRequire {
+				required = true
+			}
+		}
+		if !required {
+			t.Fatalf("%q: an explicit slash command must still require the skill", input)
+		}
+	}
+}
