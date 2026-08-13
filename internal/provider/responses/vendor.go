@@ -63,6 +63,15 @@ type vendorCapabilities struct {
 	// back to ordinary summarize without inheriting a large default".
 	compactionOutputTokens int
 
+	// storeDisabled marks endpoints that reject server-side response storage
+	// and require store:false on every request (the ChatGPT Codex backend).
+	storeDisabled bool
+
+	// encryptedReasoning marks endpoints that only accept a previous turn's
+	// reasoning replayed verbatim with the opaque encrypted_content the server
+	// issued, so it round-trips through ResponsesItems, not a rebuilt item.
+	encryptedReasoning bool
+
 	// summaryRequired marks vendors whose Responses API requires the
 	// `summary` list on input reasoning items (DashScope; without it the
 	// server rejects with "Invalid 'summary': summary is required..."). The
@@ -108,6 +117,16 @@ var vendorTable = map[string]vendorCapabilities{
 		defaultMaxOutputTokens: provider.DefaultReasoningOutputTokens,
 		compactionOutputTokens: provider.DefaultOrdinaryOutputTokens,
 	},
+	"chatgpt": {
+		// store:false leaves no server-side state, so the full input (and the
+		// encrypted reasoning) travels on every turn. The Codex CLI sends no
+		// max_output_tokens: the subscription applies its own ceiling.
+		stateless:              true,
+		storeDisabled:          true,
+		encryptedReasoning:     true,
+		toolCallReasoning:      true,
+		defaultMaxOutputTokens: 0,
+	},
 	// "" (unknown OpenAI-compatible endpoint) → zero value = default behavior.
 	// Unknown gateways deliberately do NOT inherit a large max-output default.
 }
@@ -133,6 +152,8 @@ func DetectVendor(baseURL string) string {
 		return "deepseek"
 	case host == "api.xiaomimimo.com", strings.HasSuffix(host, ".xiaomimimo.com"):
 		return "mimo"
+	case host == "chatgpt.com", strings.HasSuffix(host, ".chatgpt.com"):
+		return "chatgpt"
 	default:
 		return ""
 	}

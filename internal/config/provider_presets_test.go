@@ -73,15 +73,18 @@ func TestCuratedProviderPresetsCoverRequestedProviders(t *testing.T) {
 	got := map[string]ProviderPreset{}
 	for _, preset := range CuratedProviderPresets() {
 		got[preset.ID] = preset
-		if preset.ID == "" || preset.Label == "" || preset.KeyEnv == "" {
+		// Un preset identifica su credencial de una de dos formas: la variable
+		// de entorno con la llave, o un endpoint que solo acepta la sesión de
+		// una suscripción. Exigir siempre KeyEnv dejaría fuera el segundo.
+		if preset.ID == "" || preset.Label == "" || (preset.KeyEnv == "" && !presetUsesSubscription(preset)) {
 			t.Fatalf("preset has missing identity fields: %+v", preset)
 		}
 		if len(preset.Entries) == 0 {
 			t.Fatalf("preset %q has no entries", preset.ID)
 		}
 		for _, entry := range preset.Entries {
-			if entry.APIKeyEnv == "" {
-				t.Fatalf("preset %q entry %q has no api_key_env", preset.ID, entry.Name)
+			if entry.APIKeyEnv == "" && !entry.UsesChatGPTSession() {
+				t.Fatalf("preset %q entry %q has neither api_key_env nor a subscription endpoint", preset.ID, entry.Name)
 			}
 			if entry.PresetID != preset.ID || entry.PresetVersion != ProviderPresetVersion {
 				t.Fatalf("preset %q entry %q metadata = %q/%d, want %q/%d", preset.ID, entry.Name, entry.PresetID, entry.PresetVersion, preset.ID, ProviderPresetVersion)
@@ -733,5 +736,48 @@ func TestCuratedProviderPresetDeepSeekReasoningProtocolScope(t *testing.T) {
 				t.Fatalf("ReasoningProtocolForEntry(%q) = %q, want %q", tc.ref, got, tc.want)
 			}
 		})
+	}
+}
+
+// presetUsesSubscription reporta si el preset resuelve su credencial con la
+// sesión de una suscripción en vez de una variable de entorno.
+func presetUsesSubscription(preset ProviderPreset) bool {
+	for _, entry := range preset.Entries {
+		if entry.UsesChatGPTSession() {
+			return true
+		}
+	}
+	return false
+}
+
+// El catálogo y la búsqueda por id deben ver los mismos presets. Un preset
+// listado pero no encontrable por id se muestra en la UI y falla al instalarlo.
+func TestEveryListedPresetIsAlsoFoundByID(t *testing.T) {
+	for _, preset := range CuratedProviderPresets() {
+		if _, ok := CuratedProviderPreset(preset.ID); !ok {
+			t.Errorf("el preset %q aparece en el catálogo pero no se encuentra por id", preset.ID)
+		}
+	}
+}
+
+// El default tiene que ser uno de los modelos listados. Un default que no está
+// en la lista deja el preset apuntando a un modelo que el picker no ofrece.
+func TestChatGPTCodexPresetDefaultIsOneOfItsModels(t *testing.T) {
+	entry := chatGPTCodexPreset.Entries[0]
+	if !entry.HasModel(entry.Default) {
+		t.Fatalf("default %q no está en models %v", entry.Default, entry.Models)
+	}
+	// Los tres nombres de la familia 5.6 se verificaron contra el backend; que
+	// falte uno significa que se editó la lista a medias.
+	for _, want := range []string{"gpt-5.6-sol", "gpt-5.6-luna", "gpt-5.6-terra"} {
+		if !entry.HasModel(want) {
+			t.Errorf("falta el modelo verificado %q", want)
+		}
+	}
+	// El backend rechaza minimal y lo dice al enumerar los suyos.
+	for _, effort := range entry.SupportedEfforts {
+		if effort == "minimal" {
+			t.Error("minimal no lo acepta el backend de Codex")
+		}
 	}
 }

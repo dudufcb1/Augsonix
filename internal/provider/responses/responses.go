@@ -49,8 +49,11 @@ func newFromConfig(cfg provider.Config) (provider.Provider, error) {
 	keySource, _ := cfg.Extra["api_key_source"].(string)
 	maxOutputTokens, _ := cfg.Extra["max_output_tokens"].(int)
 	requestURL, _ := cfg.Extra["request_url"].(string)
+	headers, _ := cfg.Extra["headers"].(map[string]string)
+	tokens, _ := cfg.Extra[provider.TokenSourceKey].(provider.TokenSource)
 	return New(Config{
 		Name: cfg.Name, APIKey: cfg.APIKey, BaseURL: cfg.BaseURL, Model: cfg.Model,
+		Headers: headers, Tokens: tokens,
 		Effort: effort, Mode: mode, Stateful: stateful, WebSearch: webSearch, Proxy: proxy,
 		KeyEnv: keyEnv, KeySource: keySource, MaxOutputTokens: maxOutputTokens, RequestURL: requestURL,
 		// Extra 原样透传：vision 等能力开关由调用方（boot/CLI）写入
@@ -83,6 +86,12 @@ type Config struct {
 	// Extra carries kind-specific options; "vision" (bool) enables embedding
 	// attached Images as input_image parts on user turns.
 	Extra map[string]any
+	// Headers are extra request headers for compatible gateways. Reserved
+	// transport headers are ignored so a config entry can never unset the
+	// credential or the content type.
+	Headers map[string]string
+	// Tokens resolves an OAuth bearer per request. Nil keeps the APIKey path.
+	Tokens provider.TokenSource
 }
 
 func (c Config) mode() string {
@@ -117,6 +126,8 @@ type client struct {
 	http                               *http.Client
 	idleTimeout                        time.Duration
 	authed                             atomic.Bool
+	extraHeaders                       map[string]string
+	tokens                             provider.TokenSource
 
 	mu                   sync.Mutex
 	lastResponseID       string
@@ -125,7 +136,12 @@ type client struct {
 
 // New creates a Responses API provider.
 func New(cfg Config) provider.Provider {
+	// The endpoint identity may live in request_url alone: OAuth entries have
+	// no base_url to derive it from. base_url still wins when both are set.
 	vendor := DetectVendor(cfg.BaseURL)
+	if vendor == "" {
+		vendor = DetectVendor(cfg.RequestURL)
+	}
 	cap := capabilitiesFor(vendor)
 	maxOutputTokens := cfg.MaxOutputTokens
 	// max_output_tokens=0 is automatic. Known vendors use the 16K/32K/64K ladder;
@@ -165,7 +181,33 @@ func New(cfg Config) provider.Provider {
 		vendor: vendor, caps: cap, mode: cfg.mode(), sessionCache: sessionCache, webSearch: cfg.WebSearch, maxOutputTokens: maxOutputTokens,
 		vision: vision,
 		http:   httpClient, idleTimeout: defaultStreamIdleTimeout,
+		extraHeaders: sanitizeHeaders(cfg.Headers), tokens: cfg.Tokens,
 	}
+}
+
+// reservedHeaders no pueden venir de config: son las que arma el transporte.
+var reservedHeaders = map[string]bool{
+	"authorization": true, "content-type": true, "content-length": true, "host": true,
+}
+
+// sanitizeHeaders deja pasar solo headers propios del gateway. Un header
+// reservado en config apagaría la credencial que el provider acaba de resolver.
+func sanitizeHeaders(headers map[string]string) map[string]string {
+	if len(headers) == 0 {
+		return nil
+	}
+	out := make(map[string]string, len(headers))
+	for name, value := range headers {
+		trimmed := strings.TrimSpace(name)
+		if trimmed == "" || reservedHeaders[strings.ToLower(trimmed)] {
+			continue
+		}
+		out[trimmed] = value
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
 }
 
 func responsesReasoningDisabled(effort string) bool {
@@ -233,7 +275,7 @@ func (c *client) WarnOnMissingToolCallReasoning() bool {
 }
 
 func (c *client) sendOpts() provider.SendOptions {
-	return provider.SendOptions{Provider: c.name, KeyEnv: c.keyEnv, KeySource: c.keySource, KeyPresent: c.apiKey != "", RetryAuth: c.authed.Load()}
+	return provider.SendOptions{Provider: c.name, KeyEnv: c.keyEnv, KeySource: c.keySource, KeyPresent: c.apiKey != "" || c.tokens != nil, RetryAuth: c.authed.Load()}
 }
 
 // ResetContext drops stateful continuation metadata. Full-input stateless mode
@@ -275,8 +317,24 @@ func (c *client) send(ctx context.Context, body map[string]any) (*http.Response,
 		if err != nil {
 			return nil, err
 		}
+		for name, value := range c.extraHeaders {
+			req.Header.Set(name, value)
+		}
 		req.Header.Set("Content-Type", "application/json")
-		req.Header.Set("Authorization", "Bearer "+c.apiKey)
+		bearer := c.apiKey
+		if c.tokens != nil {
+			// Resolved per attempt, not per stream: a retry after a long tool
+			// turn must not reuse a bearer that expired while it ran.
+			token, err := c.tokens(ctx)
+			if err != nil {
+				return nil, err
+			}
+			bearer = token.Token
+			for name, value := range token.Headers {
+				req.Header.Set(name, value)
+			}
+		}
+		req.Header.Set("Authorization", "Bearer "+bearer)
 		if c.caps.sessionCacheHeader && c.sessionCache {
 			req.Header.Set("x-dashscope-session-cache", "enable")
 		}
@@ -299,6 +357,15 @@ func isStalePreviousResponseError(err error) bool {
 func (c *client) buildRequestBody(req provider.Request) (map[string]any, bool, []provider.Message) {
 	messages := provider.SanitizeToolPairing(provider.ModelMessages(req.Messages))
 	body := map[string]any{"model": c.model, "stream": true}
+	if c.caps.storeDisabled {
+		// The Codex backend refuses to persist a response, and with nothing
+		// stored the reasoning of the previous turn only comes back if we ask
+		// for its encrypted form and replay it ourselves.
+		body["store"] = false
+	}
+	if c.caps.encryptedReasoning {
+		body["include"] = []string{"reasoning.encrypted_content"}
+	}
 
 	effort := strings.ToLower(strings.TrimSpace(c.effort))
 	switch effort {
@@ -370,7 +437,7 @@ func (c *client) buildRequestBody(req provider.Request) (map[string]any, bool, [
 		return body, true, messages
 	}
 
-	body["input"] = messagesToInput(rest, c.vision, c.webSearch, c.caps.summaryRequired)
+	body["input"] = messagesToInput(rest, c.inputOptions())
 	return body, false, messages
 }
 
@@ -379,97 +446,6 @@ func splitInstructions(messages []provider.Message) (string, []provider.Message)
 		return "", messages
 	}
 	return messages[0].Content, messages[1:]
-}
-
-func messagesToInput(messages []provider.Message, vision, replayWebSearchItems, summary bool) []map[string]any {
-	input := make([]map[string]any, 0, len(messages)*2)
-	for _, message := range messages {
-		switch message.Role {
-		case provider.RoleSystem, provider.RoleUser:
-			// Text-only turns keep the documented TextInput string shape.
-			// Vision-capable user turns with attached images switch to the
-			// InputItemList array form ({type:input_text} + {type:input_image})
-			// so the text and every image ride the same message, matching the
-			// MiMo/DashScope multimodal example. The system message is always
-			// plain text: images only attach to user turns.
-			if vision && message.Role == provider.RoleUser && len(message.Images) > 0 {
-				parts := make([]map[string]string, 0, len(message.Images)+1)
-				if message.Content != "" {
-					parts = append(parts, map[string]string{"type": "input_text", "text": message.Content})
-				}
-				for _, url := range message.Images {
-					parts = append(parts, map[string]string{"type": "input_image", "image_url": url})
-				}
-				input = append(input, map[string]any{"role": "user", "content": parts})
-			} else {
-				input = append(input, map[string]any{"role": string(message.Role), "content": message.Content})
-			}
-		case provider.RoleAssistant:
-			if message.ReasoningContent != "" {
-				// Reasoning items: the OpenAI base format only needs
-				// `content`. DashScope additionally requires a `summary`
-				// list ("Invalid 'summary': summary is required and must be
-				// a list for reasoning."). Other vendors (MiMo) do not
-				// define summary in their schema; sending it leaks the
-				// reasoning text into an extra field the server may echo
-				// back into the model context, doubling chain-of-thought
-				// each turn — so only send it where the wire demands it.
-				item := map[string]any{
-					"type":    "reasoning",
-					"content": []map[string]string{{"type": "reasoning_text", "text": message.ReasoningContent}},
-				}
-				if message.ReasoningID != "" {
-					// OpenAI Responses schema marks Reasoning.id required;
-					// round-trip the provider-issued id when we captured one.
-					item["id"] = message.ReasoningID
-				}
-				if message.ReasoningStatus != "" {
-					item["status"] = message.ReasoningStatus
-				}
-				if summary {
-					item["summary"] = []map[string]string{{"type": "summary_text", "text": message.ReasoningContent}}
-				}
-				input = append(input, item)
-			}
-			if replayWebSearchItems {
-				for _, raw := range message.ResponsesItems {
-					if item, ok := decodeReplayableWebSearchItem(raw); ok {
-						input = append(input, item)
-					}
-				}
-			}
-			if message.Content != "" || len(message.ToolCalls) == 0 {
-				input = append(input, map[string]any{"role": "assistant", "content": message.Content})
-			}
-			for _, call := range message.ToolCalls {
-				input = append(input, map[string]any{
-					"type": "function_call", "call_id": call.ID,
-					"name": call.Name, "arguments": call.Arguments,
-				})
-			}
-		case provider.RoleTool:
-			input = append(input, map[string]any{
-				"type": "function_call_output", "call_id": message.ToolCallID, "output": message.Content,
-			})
-		}
-	}
-	return input
-}
-
-func decodeReplayableWebSearchItem(raw json.RawMessage) (map[string]any, bool) {
-	if len(raw) == 0 || len(raw) > maxReplayableSearchItemBytes || !json.Valid(raw) {
-		return nil, false
-	}
-	var item map[string]any
-	if err := json.Unmarshal(raw, &item); err != nil || item["type"] != "web_search_call" {
-		return nil, false
-	}
-	id, _ := item["id"].(string)
-	status, _ := item["status"].(string)
-	if strings.TrimSpace(id) == "" || status != "completed" {
-		return nil, false
-	}
-	return item, true
 }
 
 func (c *client) conversationDigest(messages []provider.Message) string {
@@ -481,7 +457,7 @@ func (c *client) conversationDigest(messages []provider.Message) string {
 	payload, _ := json.Marshal(struct {
 		Instructions string           `json:"instructions,omitempty"`
 		Input        []map[string]any `json:"input"`
-	}{Instructions: instructions, Input: messagesToInput(rest, c.vision, c.webSearch, c.caps.summaryRequired)})
+	}{Instructions: instructions, Input: messagesToInput(rest, c.inputOptions())})
 	sum := sha256.Sum256(payload)
 	return hex.EncodeToString(sum[:])
 }
@@ -545,7 +521,7 @@ func (c *client) readStream(ctx context.Context, resp *http.Response, out chan<-
 	}
 	textDeltas := make(map[string]bool)
 	reasoningDeltas := make(map[string]bool)
-	seenSearchItems := make(map[string]struct{})
+	seenReplayItems := make(map[string]struct{})
 	var responsesItems []json.RawMessage
 	var text, reasoning strings.Builder
 	reasoningID := ""
@@ -640,14 +616,14 @@ func (c *client) readStream(ctx context.Context, resp *http.Response, out chan<-
 				}
 			}
 		case "response.output_item.done":
-			if event.Item != nil && event.Item.Type == "web_search_call" && c.webSearch {
-				if _, ok := decodeReplayableWebSearchItem(event.Item.Raw); ok {
+			if event.Item != nil {
+				if _, ok := decodeReplayableItem(event.Item.Raw, c.inputOptions()); ok {
 					key := event.Item.ID
 					if key == "" {
 						key = string(event.Item.Raw)
 					}
-					if _, seen := seenSearchItems[key]; !seen {
-						seenSearchItems[key] = struct{}{}
+					if _, seen := seenReplayItems[key]; !seen {
+						seenReplayItems[key] = struct{}{}
 						raw := append(json.RawMessage(nil), event.Item.Raw...)
 						responsesItems = append(responsesItems, raw)
 						if !sendChunk(ctx, out, provider.Chunk{Type: provider.ChunkResponsesItem, ResponsesItem: raw}) {

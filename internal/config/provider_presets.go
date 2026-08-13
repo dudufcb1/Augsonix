@@ -31,8 +31,8 @@ const (
 // intentionally editable after installation; they reduce setup friction without
 // turning fast-moving third-party catalogs into hard runtime dependencies.
 func CuratedProviderPresets() []ProviderPreset {
-	presets := make([]ProviderPreset, 0, len(curatedProviderPresets))
-	for _, preset := range curatedProviderPresets {
+	presets := make([]ProviderPreset, 0, len(curatedProviderPresets)+1)
+	for _, preset := range append(curatedProviderPresets, subscriptionProviderPresets()...) {
 		// Keep the old direct lookup available for installed configurations, but
 		// do not offer the redundant Anthropic preset in new-provider surfaces.
 		if preset.ID == "deepseek-anthropic" {
@@ -49,7 +49,7 @@ func CuratedProviderPresets() []ProviderPreset {
 // CuratedProviderPreset returns a single provider preset by id.
 func CuratedProviderPreset(id string) (ProviderPreset, bool) {
 	id = strings.ToLower(strings.TrimSpace(id))
-	for _, p := range curatedProviderPresets {
+	for _, p := range append(curatedProviderPresets, subscriptionProviderPresets()...) {
 		if p.ID == id {
 			return cloneProviderPreset(p), true
 		}
