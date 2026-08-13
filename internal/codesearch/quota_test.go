@@ -73,11 +73,9 @@ func TestVoyageSurfacesQuotaAsTypedError(t *testing.T) {
 }
 
 func TestVoyageQuotaErrorKeepsTheUnderlyingCause(t *testing.T) {
-	// Con una sola credencial que se retira, el error de cuota envuelve además
-	// el fallo concreto de la llamada. Tiene que seguir siendo desenrollable:
-	// quien diagnostica necesita ver si fue un 402, un 401 o un cuerpo raro, y
-	// no solo "se agotó la cuota". Cubre el %w que reemplazó a un %v, que dejaba
-	// el original fuera del alcance de errors.As.
+	// El error de cuota envuelve el fallo concreto y tiene que seguir siendo
+	// desenrollable: quien diagnostica necesita ver si fue un 402 o un cuerpo
+	// raro, no solo "se agotó la cuota". Cubre el %w que reemplazó a un %v.
 	v := voyageServer(t, func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusPaymentRequired)
 		json.NewEncoder(w).Encode(map[string]string{"detail": "insufficient credits"})
