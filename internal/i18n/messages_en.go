@@ -564,7 +564,7 @@ var English = Messages{
 Usage:
   reasonix [--model NAME] [-c|--continue] [-r|--resume [QUERY]] [--permission-mode MODE] [--effort LEVEL] [--add-dir PATH]   interactive session
   reasonix -p|--print [--model NAME] [--output-format text|json|stream-json] [--allowed-tools RULES] [--add-dir PATH] <task>
-  reasonix run [--model NAME] [--max-steps N] [-c|--continue] [--resume PATH] [--copy] [--output-format FORMAT] <task>
+  reasonix run [--model NAME] [--max-steps N] [-c|--continue] [--resume PATH] [--copy] [--read-only] [--output-format FORMAT] <task>
   reasonix run --events-jsonl [--model NAME] <task>      emit redacted structured events as JSONL
   reasonix review [--base BRANCH] [--commit SHA] [--model NAME]  AI-powered code review on local diffs
   reasonix web [--model NAME] [--addr HOST:PORT] [--no-open]  start the local Web UI and open it in the default browser
@@ -577,6 +577,7 @@ Usage:
   reasonix report [list|show|send|delete] [ID]           review and explicitly send local CLI crash reports
   reasonix mcp <add|remove|list|import>                 manage MCP servers in reasonix.toml
   reasonix codesearch <search|status|reindex|list|clear>  semantic search over this workspace's code and history
+  reasonix auth <login|status|logout> [openai]          sign in to a subscription-backed provider
   reasonix subagent <list|create|edit|delete|try|run>   manage and run isolated subagent profiles
   reasonix init                                         show how to generate project memory (AGENTS.md)
   reasonix doctor [--json]                              print redacted local diagnostics

@@ -505,7 +505,7 @@ var ChineseTraditional = Messages{
 用法：
   reasonix [--model NAME] [-c|--continue] [-r|--resume [QUERY]] [--permission-mode MODE] [--effort LEVEL] [--add-dir PATH]   互動式會話
   reasonix -p|--print [--model NAME] [--output-format text|json|stream-json] [--allowed-tools RULES] [--add-dir PATH] <task>
-  reasonix run [--model NAME] [--max-steps N] [-c|--continue] [--resume PATH] [--copy] [--output-format FORMAT] <task>
+  reasonix run [--model NAME] [--max-steps N] [-c|--continue] [--resume PATH] [--copy] [--read-only] [--output-format FORMAT] <task>
   reasonix run --events-jsonl [--model NAME] <task>      輸出脫敏結構化事件 JSONL
   reasonix review [--base BRANCH] [--commit SHA] [--model NAME]  AI 程式碼審查（基於本機 diff）
   reasonix web [--model NAME] [--addr HOST:PORT] [--no-open]  啟動本機 Web UI 並用預設瀏覽器開啟
@@ -518,6 +518,7 @@ var ChineseTraditional = Messages{
   reasonix report [list|show|send|delete] [ID]           審閱並明確傳送本機 CLI 當機報告
   reasonix mcp <add|remove|list|import>                 管理 reasonix.toml 裡的 MCP 伺服器
   reasonix codesearch <search|status|reindex|list|clear>  對本工作區的程式碼與提交歷史做語意檢索
+  reasonix auth <login|status|logout> [openai]          登入訂閱制服務商
   reasonix subagent <list|create|edit|delete|try|run>   管理和執行隔離子智慧體 profile
   reasonix init                                         查看如何產生專案記憶（AGENTS.md）
   reasonix doctor [--json]                              輸出脫敏的本機診斷資訊

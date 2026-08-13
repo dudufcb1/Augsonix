@@ -645,3 +645,28 @@ func SourcePathForRoot(root string) string {
 	}
 	return ""
 }
+
+// ChatGPTAuthPath es donde Reasonix guarda la sesión de la suscripción ChatGPT
+// que usa el backend de Codex: <Reasonix home>/chatgpt/auth.json. Vacío cuando
+// el home no se puede resolver, en cuyo caso el login no tiene dónde escribir.
+func ChatGPTAuthPath() string {
+	dir := userSupportDir()
+	if strings.TrimSpace(dir) == "" {
+		return ""
+	}
+	return filepath.Join(dir, "chatgpt", "auth.json")
+}
+
+// CodexCLIAuthPath es la sesión del Codex CLI. Reasonix solo la lee, y nunca
+// cuando el home está aislado: un test jamás debe alcanzar la credencial real
+// del usuario.
+func CodexCLIAuthPath() string {
+	if IsolatedHomeDir() != "" {
+		return ""
+	}
+	home, err := osUserHomeDir()
+	if err != nil || strings.TrimSpace(home) == "" {
+		return ""
+	}
+	return filepath.Join(home, ".codex", "auth.json")
+}

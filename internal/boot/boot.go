@@ -196,6 +196,9 @@ type Options struct {
 	SandboxNetworkOverride *bool
 	SandboxBashOverride    string
 	WorkspaceOnly          bool
+	// ReadOnly bounds the session at the tool registry itself, so unlike
+	// PermissionAllow no approval mode can lift it.
+	ReadOnly bool
 	// SessionTemp is the session-private temp manager; Rebuild reuses old's.
 	SessionTemp *sessiontemp.Manager
 	RuntimeReload
@@ -1671,17 +1674,22 @@ func build(ctx context.Context, opts Options) (*BuildResult, error) {
 		return missing
 	})
 
+	applySessionReadOnly(reg, sink, opts.ReadOnly)
+
 	execSess := newObservedSession(sysPrompt)
 	executor := agent.New(execProv, reg, execSess, agent.Options{
-		MaxSteps:    maxSteps,
-		MaxStepsKey: opts.MaxStepsKey,
-		Temperature: cfg.Agent.Temperature,
-		TaskBudget:  taskBudgetFromConfig(cfg),
-		Pricing:     entry.Price,
-		ModelRef:    modelRef,
-		Gate:        headlessGate,
-		Hooks:       hookRunner,
-		Jobs:        jm,
+		// Second layer for the read-only bound: the registry filter cannot see
+		// what use_capability dispatches at run time.
+		ReadOnlyExecution: opts.ReadOnly,
+		MaxSteps:          maxSteps,
+		MaxStepsKey:       opts.MaxStepsKey,
+		Temperature:       cfg.Agent.Temperature,
+		TaskBudget:        taskBudgetFromConfig(cfg),
+		Pricing:           entry.Price,
+		ModelRef:          modelRef,
+		Gate:              headlessGate,
+		Hooks:             hookRunner,
+		Jobs:              jm,
 		// Parent write reservation at the executor entry covers all writers
 		// (including late Economy/MCP adds) without wrapping tool schemas.
 		WriteScheduler:               subagentScheduler,
@@ -2498,49 +2506,6 @@ func subagentEffectiveIdentity(cfg *config.Config, resolver provider.Resolver, b
 		modelID = ref
 	}
 	return modelID, strings.TrimSpace(config.EffectiveEffort(&entry))
-}
-
-// NewProvider builds a provider.Provider from a configured entry. Exported so
-// custom assemblers (e.g. the ACP per-session factory) can reuse it without
-// going through the full Build.
-func NewProvider(e *config.ProviderEntry) (provider.Provider, error) {
-	return NewProviderWithProxy(e, netclient.ProxySpec{Mode: netclient.ModeAuto})
-}
-
-// NewProviderWithProxy builds a provider.Provider with the configured ordinary
-// network proxy settings.
-func NewProviderWithProxy(e *config.ProviderEntry, proxy netclient.ProxySpec) (provider.Provider, error) {
-	return provider.New(e.Kind, provider.Config{
-		Name:    e.Name,
-		BaseURL: e.BaseURL,
-		Model:   e.Model,
-		APIKey:  e.APIKey(),
-		// Pass the key's env var so auth failures can name where to fix it, plus
-		// provider-kind-specific knobs. EffectiveEffort applies a configured
-		// default_effort when the user has not explicitly selected /effort.
-		Extra: map[string]any{
-			"api_key_env":        e.APIKeyEnv,
-			"api_key_source":     e.APIKeySourceLabel(),
-			"thinking":           e.Thinking,
-			"effort":             config.EffectiveEffort(e),
-			"supported_efforts":  e.SupportedEfforts,
-			"reasoning_protocol": config.ReasoningProtocolForEntry(e),
-			"max_output_tokens":  e.MaxOutputTokens,
-			"chat_url":           e.ChatURL,
-			"request_url":        e.RequestURL,
-			"headers":            e.Headers,
-			"extra_body":         e.ExtraBody,
-			"auth_header":        e.AuthHeader,
-			"proxy_spec":         proxy,
-			"vision":             config.EffectiveVision(e),
-			"vision_detail":      e.VisionDetail,
-			"web_search":         config.EffectiveWebSearch(e),
-			"mode":               e.ResponsesMode,
-			// Keep nil as nil so the responses provider can vendor-detect its
-			// default instead of accidentally treating every endpoint as stateful.
-			"stateful": e.ResponsesStateful,
-		},
-	})
 }
 
 // addBuiltins adds enabled built-in tools to reg. An empty list means all of

@@ -126,8 +126,13 @@ echo "解释这段代码" | reasonix run
 
 未使用 `-p` 或结构化输出格式时，`reasonix run` 保持正常的终端流式展示。它也接受
 `--model`、`--preset`（或兼容的 `--profile`）、`--max-steps`、`--effort`、`--dir`、
-`--add-dir`、`--continue`、`--resume QUERY`、`--copy`、`--allowed-tools` 和
-`--permission-mode`，以及作为 `--permission-mode auto` 别名的 `--auto` / `-y`。
+`--add-dir`、`--continue`、`--resume QUERY`、`--copy`、`--allowed-tools`、
+`--permission-mode`、`--read-only`，以及作为 `--permission-mode auto` 别名的
+`--auto` / `-y`。
+
+`--read-only` 在工具注册表层面约束本次运行：writer 工具根本不会注册，`bash` 只接受
+权限层判定为只读的命令，因此任何权限模式都无法解除它。适用于审查、审计与检查类任务，
+包括 pre-commit 钩子或 CI 任务在无人值守下发起的那些。
 
 ### 基准对照组
 
@@ -311,7 +316,9 @@ reasonix --allowed-tools "Bash(go test ./...)" --allowed-tools read_file
 （或 `-y`）。这个别名不能和显式 `--permission-mode` 同时使用。
 
 `--allowed-tools` 是会话权限覆盖，不是 provider tool schema 过滤器。规则可以用逗号
-或空格分隔，也可重复传入参数。配置中的 deny 规则始终优先于命令行 allow 规则。
+或空格分隔，也可重复传入参数。配置中的 deny 规则始终优先于命令行 allow 规则。在这里
+只列出只读工具并不会把本次运行限制在它们之内——writer 工具依然在注册表里；要移除它们
+请用 `reasonix run --read-only`。
 
 在非交互运行（`reasonix run` / `-p`）下没有可应答的审批，各模式都以非阻塞方式解析。
 默认 `ask` / `manual` 对显式 Ask 决策和普通 writer fallback 失败关闭，只读调用仍会执行；

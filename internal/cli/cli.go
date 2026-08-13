@@ -272,6 +272,7 @@ type cliBuildOverrides struct {
 	Stderr               io.Writer
 	OnSessionRecovered   func(control.SessionRecoveryInfo) error
 	Ablation             ablation.Set
+	ReadOnly             bool
 	// SessionTemp carries the previous Controller's private temporary directory
 	// manager across model/profile rebuilds so temporary files survive.
 	SessionTemp *sessiontemp.Manager
@@ -313,6 +314,7 @@ func cliProfileBuildOptions(modelName string, maxStepsOverride int, requireKey b
 		Stderr:               overrides.Stderr,
 		OnSessionRecovered:   overrides.OnSessionRecovered,
 		Ablation:             overrides.Ablation,
+		ReadOnly:             overrides.ReadOnly,
 		SessionTemp:          overrides.SessionTemp,
 	}
 }
@@ -503,6 +505,7 @@ func runAgent(args []string, version string) int {
 	var allowedToolValues []string
 	fs.StringArrayVar(&allowedToolValues, "allowed-tools", nil, "comma or space-separated permission rules to allow")
 	fs.StringArrayVar(&allowedToolValues, "allowedTools", nil, "alias for --allowed-tools")
+	readOnly := fs.Bool("read-only", false, "drop every writer tool for this run; bash accepts only read-only commands")
 	if code, ok := parseCommandFlags(fs, args); !ok {
 		return code
 	}
@@ -688,6 +691,7 @@ func runAgent(args []string, version string) int {
 		HeadlessApprovalMode: permissions.approval,
 		OnSessionRecovered:   cliSessionRecoveredHandler(leases),
 		Ablation:             ablated,
+		ReadOnly:             *readOnly,
 	}
 	ctrl, err := setupProfileWithOverrides(ctx, *model, *maxSteps, true, sink, profile, overrides)
 	if err != nil {

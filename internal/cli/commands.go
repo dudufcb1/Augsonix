@@ -5,6 +5,7 @@ package cli
 // veces, y cada repetición costaba una rama de complejidad en la función de
 // entrada. Agregar uno nuevo es una línea aquí.
 var themedCommands = map[string]func([]string) int{
+	"auth":       authCommand,
 	"codesearch": codeSearchCommand,
 	"config":     configCommand,
 	"hook":       hookCommand,

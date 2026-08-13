@@ -140,7 +140,12 @@ echo "explain this code" | reasonix run
 structured output format is selected. It also accepts `--model`, `--preset`
 (or legacy `--profile`), `--max-steps`, `--effort`, `--dir`, `--add-dir`,
 `--continue`, `--resume QUERY`, `--copy`, `--allowed-tools`, `--permission-mode`,
-and `--auto` / `-y` (an alias for `--permission-mode auto`).
+`--read-only`, and `--auto` / `-y` (an alias for `--permission-mode auto`).
+
+`--read-only` bounds the run at the tool registry: writer tools are never
+registered and `bash` accepts only permission-classified read-only commands, so
+no permission mode can lift it. Use it for review, audit and inspection errands
+— including ones a pre-commit hook or CI job launches unattended.
 
 ### Benchmark arms
 
@@ -349,7 +354,9 @@ command names, shell `-c`, and other nested/indirect Bash forms. The default is
 
 `--allowed-tools` is a session permission override, not a provider tool-schema
 filter. Rules may be comma- or space-separated, and the flag is repeatable.
-Configured deny rules always win over command-line allow rules.
+Configured deny rules always win over command-line allow rules. Passing a list
+of read-only tools there does not restrict the run to them — every writer stays
+registered; `reasonix run --read-only` is the flag that removes them.
 
 In non-interactive runs (`reasonix run` / `-p`) there is no prompt to answer, so
 approval modes resolve without blocking. The default `ask` / `manual` posture

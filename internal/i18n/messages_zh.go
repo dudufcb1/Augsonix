@@ -565,7 +565,7 @@ var Chinese = Messages{
 用法：
   reasonix [--model NAME] [-c|--continue] [-r|--resume [QUERY]] [--permission-mode MODE] [--effort LEVEL] [--add-dir PATH]   交互式会话
   reasonix -p|--print [--model NAME] [--output-format text|json|stream-json] [--allowed-tools RULES] [--add-dir PATH] <task>
-  reasonix run [--model NAME] [--max-steps N] [-c|--continue] [--resume PATH] [--copy] [--output-format FORMAT] <task>
+  reasonix run [--model NAME] [--max-steps N] [-c|--continue] [--resume PATH] [--copy] [--read-only] [--output-format FORMAT] <task>
   reasonix run --events-jsonl [--model NAME] <task>      输出脱敏结构化事件 JSONL
   reasonix review [--base BRANCH] [--commit SHA] [--model NAME]  AI 代码审查（基于本地 diff）
   reasonix web [--model NAME] [--addr HOST:PORT] [--no-open]  启动本地 Web UI 并用默认浏览器打开
@@ -578,6 +578,7 @@ var Chinese = Messages{
   reasonix report [list|show|send|delete] [ID]           审阅并明确发送本地 CLI 崩溃报告
   reasonix mcp <add|remove|list|import>                 管理 reasonix.toml 里的 MCP 服务器
   reasonix codesearch <search|status|reindex|list|clear>  对本工作区的代码与提交历史做语义检索
+  reasonix auth <login|status|logout> [openai]          登录订阅制服务商
   reasonix subagent <list|create|edit|delete|try|run>   管理和运行隔离子智能体 profile
   reasonix init                                         查看如何生成项目记忆（AGENTS.md）
   reasonix doctor [--json]                              输出脱敏的本地诊断信息
