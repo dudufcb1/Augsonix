@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"strings"
 	"sync/atomic"
 	"testing"
 )
@@ -68,6 +69,26 @@ func TestVoyageSurfacesQuotaAsTypedError(t *testing.T) {
 	}
 	if calls != 1 {
 		t.Errorf("hubo %d llamadas; reintentar sin cuota solo retrasa el aviso", calls)
+	}
+}
+
+func TestVoyageQuotaErrorKeepsTheUnderlyingCause(t *testing.T) {
+	// Con una sola credencial que se retira, el error de cuota envuelve además
+	// el fallo concreto de la llamada. Tiene que seguir siendo desenrollable:
+	// quien diagnostica necesita ver si fue un 402, un 401 o un cuerpo raro, y
+	// no solo "se agotó la cuota". Cubre el %w que reemplazó a un %v, que dejaba
+	// el original fuera del alcance de errors.As.
+	v := voyageServer(t, func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusPaymentRequired)
+		json.NewEncoder(w).Encode(map[string]string{"detail": "insufficient credits"})
+	})
+
+	_, err := v.Embed(context.Background(), []string{"a"}, KindDocument)
+	if !errors.Is(err, ErrQuotaExhausted) {
+		t.Fatalf("el error no llegó como ErrQuotaExhausted: %v", err)
+	}
+	if !strings.Contains(err.Error(), "402") && !strings.Contains(err.Error(), "insufficient credits") {
+		t.Errorf("el error de cuota perdió la causa concreta: %v", err)
 	}
 }
 
