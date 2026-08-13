@@ -803,7 +803,7 @@ func RenderTOMLForScope(c *Config, scope RenderScope) string {
 			renderPluginPolicy(&b, pl)
 		}
 	}
-
+	renderCodeSearch(&b, c.CodeSearch)
 	return b.String()
 }
 
