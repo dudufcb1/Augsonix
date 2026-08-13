@@ -70,6 +70,10 @@ type Constraints struct {
 	RequireFullVerification bool
 	// PlanModeReadOnly is the explicit plan-mode read-only boundary.
 	PlanModeReadOnly bool
+	// InstructedReadOnly records that the user's own text forbids mutation,
+	// unlike the plan-mode boundary, which lifts on approval. Delivery gates
+	// stand down for it so a read-only errand is not held to a write receipt.
+	InstructedReadOnly bool
 	// Notes records structured reasons for diagnostics (never user-facing).
 	Notes []string
 }
@@ -332,21 +336,28 @@ func parseConstraints(instruction string) Constraints {
 	var c Constraints
 	lower := strings.ToLower(instruction)
 	// Analysis-only / no modifications
-	if matchesAny(lower, []string{
+	if matchesAnyUnscoped(lower, []string{
 		"只分析", "只读", "不要修改", "别改", "不要改", "仅分析", "只看不改",
 		"analyze only", "analysis only", "don't modify", "do not modify",
 		"don't change", "do not change", "no changes", "read only", "read-only",
 		"without modifying", "without changes", "don't edit", "do not edit",
+		"no modifiques", "no modificar", "sin modificar", "no cambies", "no cambiar",
+		"no edites", "no editar", "no toques", "sin tocar", "solo lectura",
+		"sólo lectura", "solo analiza", "sólo analiza", "solo revisa", "sólo revisa",
 	}) {
 		c.ForbidMutation = true
+		c.InstructedReadOnly = true
 		c.Notes = append(c.Notes, "user_forbid_mutation")
 	}
 	// Reproduce but don't fix
-	if matchesAny(lower, []string{
+	if matchesAnyUnscoped(lower, []string{
 		"复现但不修复", "只复现", "不要修复", "reproduce but don't fix",
 		"reproduce only", "don't fix", "do not fix", "no fix",
+		"no lo arregles", "no arregles", "no corrijas", "no repares",
+		"solo reproduce", "sólo reproduce",
 	}) {
 		c.ForbidMutation = true
+		c.InstructedReadOnly = true
 		c.Notes = append(c.Notes, "user_reproduce_only")
 	}
 	// No tests
@@ -354,6 +365,8 @@ func parseConstraints(instruction string) Constraints {
 		"不要测试", "别跑测试", "不用测试", "跳过测试", "不要跑测试",
 		"don't run tests", "do not run tests", "no tests", "skip tests",
 		"without tests", "don't test", "do not test",
+		"no corras pruebas", "no ejecutes pruebas", "no corras los tests",
+		"sin pruebas", "sin correr pruebas",
 	}) {
 		c.ForbidTests = true
 		c.Notes = append(c.Notes, "user_forbid_tests")
@@ -368,6 +381,7 @@ func parseConstraints(instruction string) Constraints {
 		"不要 push", "不要push", "别 push", "别push", "不要推送", "不要发布",
 		"don't push", "do not push", "no push", "don't publish", "do not publish",
 		"no publish", "don't deploy", "do not deploy",
+		"no hagas push", "no publiques", "no despliegues", "sin push",
 	}) {
 		c.ForbidExternal = true
 		c.Notes = append(c.Notes, "user_forbid_external")
@@ -408,6 +422,49 @@ func matchesAny(lower string, needles []string) bool {
 		}
 	}
 	return false
+}
+
+// scopeQualifiers bound a prohibition to a region instead of forbidding the
+// work: "no toques nada fuera de tests/" says where to write, not that writing
+// is refused. A total read-only turn cannot be inferred from such a phrase.
+var scopeQualifiers = []string{
+	"fuera de", "salvo", "excepto", "aparte de", "mas que", "más que",
+	"outside", "except", "other than", "besides",
+	"以外", "之外",
+}
+
+// matchesAnyUnscoped is matchesAny with scope-qualified hits skipped. Every
+// occurrence is examined, so a bounded phrase never masks a later absolute one.
+func matchesAnyUnscoped(lower string, needles []string) bool {
+	for _, n := range needles {
+		n = strings.ToLower(n)
+		if n == "" {
+			continue
+		}
+		for i := 0; i < len(lower); {
+			j := strings.Index(lower[i:], n)
+			if j < 0 {
+				break
+			}
+			end := i + j + len(n)
+			if !scopeQualified(lower, end) {
+				return true
+			}
+			i = end
+		}
+	}
+	return false
+}
+
+// scopeQualified reports whether the rest of the matched line names an
+// exception. The window stops at the newline: the next instruction is a
+// separate statement and must not soften this one.
+func scopeQualified(lower string, from int) bool {
+	rest := lower[from:]
+	if end := strings.IndexByte(rest, '\n'); end >= 0 {
+		rest = rest[:end]
+	}
+	return matchesAny(rest, scopeQualifiers)
 }
 
 func isSecurityClass(instruction string) bool {

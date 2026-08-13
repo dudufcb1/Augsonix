@@ -86,6 +86,40 @@ func TestConstraintsNoMutation(t *testing.T) {
 	}
 }
 
+func TestConstraintsSpanishNoMutation(t *testing.T) {
+	for _, raw := range []string{
+		"revisa el diff y reporta los problemas, no modifiques nada",
+		"es una revision de solo lectura del repo",
+		"analiza el bug pero no lo arregles",
+	} {
+		p := Derive(Input{Raw: raw, Preset: agentpreset.Balanced})
+		if p.AllowsMutation() {
+			t.Fatalf("must forbid mutation for %q", raw)
+		}
+		if !p.Constraints.InstructedReadOnly {
+			t.Fatalf("instructed read-only not recorded for %q", raw)
+		}
+	}
+}
+
+// TestPlanModeIsNotInstructedReadOnly separates the two ways a turn can be
+// barred from mutating: plan mode lifts on approval and execution resumes under
+// the same delivery expectations, so it must not be recorded as the user having
+// asked for a read-only turn.
+func TestPlanModeIsNotInstructedReadOnly(t *testing.T) {
+	p := Derive(Input{
+		Raw:      "implement the feature",
+		Preset:   agentpreset.Delivery,
+		PlanMode: true,
+	})
+	if p.Constraints.InstructedReadOnly {
+		t.Fatal("plan mode must not count as an instructed read-only turn")
+	}
+	if !p.Constraints.PlanModeReadOnly {
+		t.Fatal("plan mode boundary not recorded")
+	}
+}
+
 func TestConstraintsNoTests(t *testing.T) {
 	p := Derive(Input{
 		Raw:    "fix the bug but don't run tests",
@@ -196,5 +230,49 @@ func TestMatrixPlanningRoutes(t *testing.T) {
 	})
 	if d.Route != RouteFullPlan {
 		t.Fatalf("delivery structured multi-file route = %v, want full", d.Route)
+	}
+}
+
+func TestDeriveScopedProhibitionKeepsWriting(t *testing.T) {
+	for _, instruction := range []string{
+		"escribe las pruebas; no toques nada fuera de backend/tests/",
+		"no modifiques nada salvo los archivos de prueba",
+		"add the tests, but don't change anything outside tests/",
+		"reproduce the bug in a test; do not modify anything except tests/",
+	} {
+		p := Derive(Input{Raw: instruction, Preset: agentpreset.Delivery})
+		if p.Constraints.ForbidMutation {
+			t.Fatalf("%q: ForbidMutation = true, want false (scope, not prohibition)", instruction)
+		}
+		if !p.AllowsMutation() {
+			t.Fatalf("%q: AllowsMutation() = false", instruction)
+		}
+	}
+}
+
+func TestDeriveAbsoluteProhibitionStillForbids(t *testing.T) {
+	for _, instruction := range []string{
+		"solo analiza el bug, no modifiques nada",
+		"analyze this module, read only",
+		"reproduce the failure, don't fix it",
+		"no toques nada del repositorio",
+	} {
+		p := Derive(Input{Raw: instruction, Preset: agentpreset.Delivery})
+		if !p.Constraints.ForbidMutation {
+			t.Fatalf("%q: ForbidMutation = false, want true", instruction)
+		}
+		if !p.Constraints.InstructedReadOnly {
+			t.Fatalf("%q: InstructedReadOnly = false, want true", instruction)
+		}
+	}
+}
+
+func TestDeriveScopeQualifierDoesNotMaskALaterAbsoluteInstruction(t *testing.T) {
+	p := Derive(Input{
+		Raw:    "no toques nada fuera de tests/\nen realidad no modifiques nada, solo analiza",
+		Preset: agentpreset.Delivery,
+	})
+	if !p.Constraints.ForbidMutation {
+		t.Fatal("ForbidMutation = false: the unscoped second line must still bind")
 	}
 }
