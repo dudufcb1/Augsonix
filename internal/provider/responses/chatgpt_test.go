@@ -185,7 +185,10 @@ func TestDeepSeekRequestKeysAreUnchangedByTheCodexSupport(t *testing.T) {
 	})
 
 	got := slices.Sorted(maps.Keys(body))
-	want := []string{"input", "max_output_tokens", "model", "reasoning", "stream", "tools"}
+	// Sin max_output_tokens desde v1.25.0: en DeepSeek oficial se omite para que
+	// el servidor aplique su techo de 384K, porque la escalera propia de
+	// 16/32/64K abortaba el razonamiento del V4 Pro a los 128KB.
+	want := []string{"input", "model", "reasoning", "stream", "tools"}
 	if !slices.Equal(got, want) {
 		t.Fatalf("claves del request de DeepSeek = %v, esperaba %v", got, want)
 	}

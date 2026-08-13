@@ -12,7 +12,7 @@ import (
 // project slug goes last so that tail is human-readable, prefixed by a
 // session timestamp for per-session stickiness. Empty omits the header.
 func (a *Agent) gatewaySessionID() string {
-	return gatewaySessionID(a.sessionPath, a.writeWorkspaceRoot)
+	return gatewaySessionID(a.SessionPath(), a.writeWorkspaceRoot)
 }
 
 func gatewaySessionID(sessionPath, workspaceRoot string) string {

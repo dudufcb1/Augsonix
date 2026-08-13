@@ -76,9 +76,9 @@ type Config struct {
 	KeyEnv     string
 	KeySource  string
 	RequestURL string // optional exact Responses request URL; empty derives from BaseURL
-	// MaxOutputTokens is the total provider output budget. Zero enables Reasonix's
-	// 32K reasoning safety default on official DeepSeek and otherwise omits the
-	// field; thinking-disabled DeepSeek requests and negative values omit it.
+	// MaxOutputTokens is the total provider output budget. Zero omits the field
+	// on official DeepSeek (server 384K ceiling) and unknown endpoints; MiMo
+	// still applies its 16K/32K ladder. Negative values omit it.
 	MaxOutputTokens int
 	// SessionCache controls DashScope's opt-in header. The header is never sent
 	// to non-DashScope endpoints even when this value is true.
@@ -144,15 +144,12 @@ func New(cfg Config) provider.Provider {
 	}
 	cap := capabilitiesFor(vendor)
 	maxOutputTokens := cfg.MaxOutputTokens
-	// max_output_tokens=0 is automatic. Known vendors use the 16K/32K/64K ladder;
-	// thinking-disabled DeepSeek still gets the ordinary 16K auto budget.
-	// 128K is never chosen automatically. Compact_ratio is independent.
-	if maxOutputTokens == 0 && cap.defaultMaxOutputTokens > 0 {
-		if vendor == "deepseek" || vendor == "mimo" {
-			maxOutputTokens = responsesAutoOutputBudget(vendor, cfg.Effort)
-		} else {
-			maxOutputTokens = cap.defaultMaxOutputTokens
-		}
+	// Official DeepSeek omits max_output_tokens (server 384K). MiMo still uses
+	// the 16K/32K effort ladder. Compact_ratio is independent.
+	if maxOutputTokens == 0 && vendor == "mimo" {
+		maxOutputTokens = responsesAutoOutputBudget(vendor, cfg.Effort)
+	} else if maxOutputTokens == 0 && vendor != "deepseek" && cap.defaultMaxOutputTokens > 0 {
+		maxOutputTokens = cap.defaultMaxOutputTokens
 	}
 	sessionCache := cap.sessionCacheHeader
 	if cfg.SessionCache != nil {
@@ -219,9 +216,8 @@ func responsesReasoningDisabled(effort string) bool {
 	}
 }
 
-// responsesAutoOutputBudget mirrors Chat Completions: DeepSeek defaults empty
-// effort to high (64K), low stays 32K, thinking disabled is ordinary 16K.
-// Never auto-selects 128K.
+// responsesAutoOutputBudget is the MiMo (and similar) 16K/32K ladder.
+// Official DeepSeek must not call this; it omits max_output_tokens instead.
 func responsesAutoOutputBudget(vendor, effort string) int {
 	if responsesReasoningDisabled(effort) {
 		return provider.AutoOutputBudget(false, effort)
@@ -381,12 +377,10 @@ func (c *client) buildRequestBody(req provider.Request) (map[string]any, bool, [
 	if maxOutputTokens == 0 {
 		maxOutputTokens = c.maxOutputTokens
 	}
-	if maxOutputTokens == 0 && c.caps.defaultMaxOutputTokens > 0 {
-		if c.vendor == "deepseek" || c.vendor == "mimo" {
-			maxOutputTokens = responsesAutoOutputBudget(c.vendor, c.effort)
-		} else {
-			maxOutputTokens = c.caps.defaultMaxOutputTokens
-		}
+	if maxOutputTokens == 0 && c.vendor == "mimo" {
+		maxOutputTokens = responsesAutoOutputBudget(c.vendor, c.effort)
+	} else if maxOutputTokens == 0 && c.vendor != "deepseek" && c.caps.defaultMaxOutputTokens > 0 {
+		maxOutputTokens = c.caps.defaultMaxOutputTokens
 	}
 	if maxOutputTokens > 0 {
 		body["max_output_tokens"] = maxOutputTokens
@@ -626,7 +620,7 @@ func (c *client) readStream(ctx context.Context, resp *http.Response, out chan<-
 						seenReplayItems[key] = struct{}{}
 						raw := append(json.RawMessage(nil), event.Item.Raw...)
 						responsesItems = append(responsesItems, raw)
-						if !sendChunk(ctx, out, provider.Chunk{Type: provider.ChunkResponsesItem, ResponsesItem: raw}) {
+						if !emitSearchReplay(ctx, out, raw) {
 							return
 						}
 					}

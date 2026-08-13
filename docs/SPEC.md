@@ -274,11 +274,12 @@ when the sole automatic threshold is crossed.
   user-global value used by desktop and new CLI sessions. UI always shows the
   **effective** ratio.
 - `max_output_tokens` is an independent **per-turn** completion ceiling.
-  Recommended: `0` (**automatic**, not unlimited; DeepSeek default high → ~64K).
-  User presets: `32768` ordinary coding / cost control, `65536` heavy reasoning /
-  long tool loops, `131072` only after repeated `finish_reason=length`.
-  Negative omits optional wire limits when the protocol allows. Clipped only at
-  send time against remaining window and **never** changes `triggerTokens` or
+  Recommended: `0` — official DeepSeek omits the field so the server uses the
+  documented **384K** output cap; thinking depth is `effort` only (default high).
+  A positive value is an explicit cost cap. Negative omits optional wire limits
+  when the protocol allows; official DeepSeek Anthropic still sends 384K because
+  `max_tokens` is required (`budget_tokens` is ignored). Clipped only at send
+  time against remaining window and **never** changes `triggerTokens` or
   maintenance timing. Billing follows actual completion tokens, not the ceiling.
 - Giant tool results are bounded **once**, on first entry to the model:
   `Content` is the stable ≤32KB visible form; `RawContent` holds the full original
@@ -343,6 +344,15 @@ fold region that fits the retention budget**, and the recent tail. The messages
 the keep policy protects also survive, though a failure with a recorded execution
 keeps only its failure-carrying lines. Everything else is **best-effort** — it
 reaches the summarizer and survives only as well as the digest captured it.
+
+That protection has to hold across *repeated* folds, which is why a stored
+projection keeps the host's `ToolExecution` record while a provider request does
+not. `KeepErrors` classifies a failure from that record rather than from text,
+because a real `go test` log opens with `=== RUN` and no prefix match can see
+it; a projection written without the record would leave the *next* fold unable
+to classify what the current one just protected. The strip therefore belongs at
+the provider boundary — `ModelMessages` — and not at projection write time,
+where `ProjectionMessages` preserves it.
 
 User turns are held to a different standard than the work they govern. A
 constraint stated at turn 4 ("do not change the public API") exists nowhere but
@@ -1026,10 +1036,10 @@ default        = "deepseek-v4-flash"   # optional; defaults to models[0]
 api_key_env    = "DEEPSEEK_API_KEY"
 web_search     = true
 context_window = 1000000   # tokens; harness compacts older history near this limit (0 disables)
-# max_output_tokens = 0              # recommended: automatic (DeepSeek default high → ~64K)
-# max_output_tokens = 32768          # ordinary coding / cost control
-# max_output_tokens = 65536          # heavy reasoning / long tool loops
-# max_output_tokens = 131072         # only after repeated finish_reason=length
+# max_output_tokens = 0              # recommended: official DeepSeek omits the field (server 384K)
+# max_output_tokens = 32768          # optional cost cap
+# max_output_tokens = 65536          # optional cost cap
+# max_output_tokens = 131072         # optional cost cap
 # max_output_tokens never changes compact_ratio
 # model_overrides = { "deepseek-v4-flash" = { context_window = 1000000, max_output_tokens = 32768 } }
 
