@@ -250,9 +250,7 @@ func (ix *Index) processFiles(ctx context.Context, files []string, onProgress fu
 	results := make(chan syncOutcome)
 	var wg sync.WaitGroup
 	for range syncWorkers {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+		wg.Go(func() {
 			for f := range jobs {
 				changed, err := ix.syncFile(ctx, f)
 				select {
@@ -261,7 +259,7 @@ func (ix *Index) processFiles(ctx context.Context, files []string, onProgress fu
 					return
 				}
 			}
-		}()
+		})
 	}
 	go func() {
 		defer close(jobs)

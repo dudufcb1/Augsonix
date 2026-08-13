@@ -122,7 +122,7 @@ func TestChunkFileHandlesHostileSyntax(t *testing.T) {
 func TestChunkFileIsDeterministic(t *testing.T) {
 	// El mismo archivo produce los mismos hashes en corridas distintas: de eso
 	// depende que reindexar no vuelva a embeber lo que no cambió.
-	for i := 0; i < 3; i++ {
+	for range 3 {
 		a := ChunkFile("a.py", pythonSample)
 		b := ChunkFile("a.py", pythonSample)
 		if len(a) != len(b) {
@@ -156,7 +156,7 @@ func TestChunkFileRespectsSizeCeiling(t *testing.T) {
 func bigDeclaration() string {
 	var b strings.Builder
 	b.WriteString("package main\n\nfunc grande() {\n")
-	for i := 0; i < 200; i++ {
+	for i := range 200 {
 		fmt.Fprintf(&b, "\tresultado := calcular(alfa, beta, gama, delta, %d)\n", i)
 	}
 	b.WriteString("}\n")

@@ -3,6 +3,7 @@ package codesearch
 import (
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -29,10 +30,8 @@ func declarationAt(t *testing.T, path, content, marker string) bool {
 		if headHas(b) {
 			return true
 		}
-		for _, s := range b.Sub {
-			if headHas(s) {
-				return true
-			}
+		if slices.ContainsFunc(b.Sub, headHas) {
+			return true
 		}
 	}
 	return false

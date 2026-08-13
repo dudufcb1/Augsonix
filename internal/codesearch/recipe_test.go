@@ -91,7 +91,7 @@ func TestIndexRecipeCarriesTheChunkerVersion(t *testing.T) {
 func packingSample() string {
 	var b strings.Builder
 	b.WriteString("package packing\n")
-	for i := 0; i < 30; i++ {
+	for i := range 30 {
 		fmt.Fprintf(&b, "\n// Paso%d documenta el paso %d del proceso.\nfunc Paso%d(entrada int) int {\n", i, i, i)
 		for j := 0; j <= i%7; j++ {
 			fmt.Fprintf(&b, "\tacumulado := entrada*%d + %d\n\tentrada = acumulado\n", j+1, i)
@@ -106,7 +106,7 @@ func packingSample() string {
 func packingSamplePython() string {
 	var b strings.Builder
 	b.WriteString("import os\n")
-	for i := 0; i < 30; i++ {
+	for i := range 30 {
 		fmt.Fprintf(&b, "\n\ndef paso_%d(entrada):\n    \"\"\"Paso %d del proceso.\"\"\"\n", i, i)
 		for j := 0; j <= i%7; j++ {
 			fmt.Fprintf(&b, "    acumulado = entrada * %d + %d\n    entrada = acumulado\n", j+1, i)

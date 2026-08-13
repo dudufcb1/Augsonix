@@ -71,8 +71,13 @@ func TestPromptGuidanceIsStable(t *testing.T) {
 	// El texto entra al prefijo estable del prompt. Si variara entre llamadas
 	// dentro de una sesión, cada turno sería un fallo de caché del proveedor.
 	c := CodeSearchConfig{Prompt: PromptModeMandatory}
-	if c.PromptGuidance() != c.PromptGuidance() {
-		t.Error("la guía del prompt cambió entre dos llamadas")
+	// Varias vueltas, no dos: un texto construido recorriendo un mapa sale
+	// igual dos veces a menudo y distinto a la décima.
+	first := c.PromptGuidance()
+	for i := range 10 {
+		if got := c.PromptGuidance(); got != first {
+			t.Fatalf("la guía cambió en la llamada %d:\n primera: %q\n ahora:   %q", i+2, first, got)
+		}
 	}
 }
 

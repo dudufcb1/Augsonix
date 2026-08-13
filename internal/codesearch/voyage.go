@@ -180,7 +180,7 @@ func (v *Voyage) post(ctx context.Context, path string, body, out any) error {
 		// La credencial no da más. Rotar no espera: el fallo no fue del
 		// servidor sino de esa cuenta, así que no hay nada que aguardar.
 		if !v.Keys.Retire(slot) {
-			return fmt.Errorf("%w: %v", ErrQuotaExhausted, err)
+			return fmt.Errorf("%w: %w", ErrQuotaExhausted, err)
 		}
 	}
 }

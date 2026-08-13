@@ -46,7 +46,7 @@ func TestKeyringReportsWhenNothingIsLeft(t *testing.T) {
 	// Cuando ya no queda ninguna hay que decirlo, no seguir mandando peticiones
 	// con una credencial muerta.
 	k := NewKeyring("a", "b")
-	for i := 0; i < 2; i++ {
+	for i := range 2 {
 		_, slot, ok := k.Current()
 		if !ok {
 			t.Fatalf("se quedó sin credenciales en la vuelta %d", i)
@@ -101,14 +101,12 @@ func TestKeyringIsSafeUnderConcurrency(t *testing.T) {
 	// pueden pedir credencial y retirarla a la vez.
 	k := NewKeyring("a", "b", "c", "d")
 	var wg sync.WaitGroup
-	for i := 0; i < 50; i++ {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+	for range 50 {
+		wg.Go(func() {
 			if _, slot, ok := k.Current(); ok {
 				k.Retire(slot)
 			}
-		}()
+		})
 	}
 	wg.Wait()
 	if k.Alive() != 0 {

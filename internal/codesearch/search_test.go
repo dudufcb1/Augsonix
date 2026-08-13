@@ -3,6 +3,7 @@ package codesearch
 import (
 	"context"
 	"errors"
+	"slices"
 	"testing"
 )
 
@@ -23,7 +24,7 @@ func (f *fakeReranker) Rerank(_ context.Context, query string, docs []string, to
 		return nil, f.err
 	}
 	out := make([]Ranked, 0, len(docs))
-	for i := len(docs) - 1; i >= 0; i-- {
+	for i := range slices.Backward(docs) {
 		out = append(out, Ranked{Index: i, Score: float32(len(docs) - i)})
 	}
 	if topK > 0 && len(out) > topK {

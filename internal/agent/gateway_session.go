@@ -41,10 +41,7 @@ func projectSlug(workspaceRoot string) string {
 			continue
 		}
 		letters := []rune(strings.ToLower(part))
-		cut := len(letters)
-		if cut > 3 {
-			cut = 3
-		}
+		cut := min(len(letters), 3)
 		words = append(words, string(letters[:cut]))
 		if len(words) == 3 {
 			break

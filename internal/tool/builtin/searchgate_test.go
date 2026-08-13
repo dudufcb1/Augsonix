@@ -120,10 +120,8 @@ func TestGateIsSafeUnderConcurrentTools(t *testing.T) {
 	g := &SearchGate{Mode: FrictionSemi, Limit: 3}
 	var wg sync.WaitGroup
 	for range 50 {
-		wg.Add(1)
-		go func() { defer wg.Done(); _ = g.Check(false) }()
-		wg.Add(1)
-		go func() { defer wg.Done(); g.RecordSemantic() }()
+		wg.Go(func() { ; _ = g.Check(false) })
+		wg.Go(func() { ; g.RecordSemantic() })
 	}
 	wg.Wait()
 }

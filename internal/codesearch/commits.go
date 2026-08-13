@@ -98,7 +98,7 @@ func commitHashes(ctx context.Context, root string, max int) ([]string, error) {
 		return nil, err
 	}
 	var hashes []string
-	for _, line := range strings.Split(strings.TrimSpace(out), "\n") {
+	for line := range strings.SplitSeq(strings.TrimSpace(out), "\n") {
 		if line != "" {
 			hashes = append(hashes, line)
 		}
@@ -135,7 +135,7 @@ func commitFiles(ctx context.Context, root, hash string) []string {
 		return nil
 	}
 	var files []string
-	for _, line := range strings.Split(strings.TrimSpace(out), "\n") {
+	for line := range strings.SplitSeq(strings.TrimSpace(out), "\n") {
 		if line != "" {
 			files = append(files, line)
 		}

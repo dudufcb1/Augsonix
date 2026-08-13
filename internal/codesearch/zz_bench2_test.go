@@ -27,7 +27,7 @@ func TestBenchReplace(t *testing.T) {
 		}
 		var total time.Duration
 		const rounds = 3
-		for i := 0; i < rounds; i++ {
+		for i := range rounds {
 			start := time.Now()
 			if err := st.Replace(fmt.Sprintf("f%d.go", i), "fh", chunks, vecs); err != nil {
 				t.Fatal(err)
@@ -35,7 +35,7 @@ func TestBenchReplace(t *testing.T) {
 			total += time.Since(start)
 		}
 		fmt.Printf("Replace de %2d fragmentos: %v\n", n, (total / rounds).Round(time.Millisecond))
-		for i := 0; i < rounds; i++ {
+		for i := range rounds {
 			st.Delete(fmt.Sprintf("f%d.go", i))
 		}
 	}

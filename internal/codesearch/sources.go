@@ -91,7 +91,7 @@ func IndexableContent(content string) bool {
 	if len(content)/lines > generatedLineAverage {
 		return false
 	}
-	for _, line := range strings.Split(content, "\n") {
+	for line := range strings.SplitSeq(content, "\n") {
 		if len(line) > maxChunkChars {
 			return false
 		}
