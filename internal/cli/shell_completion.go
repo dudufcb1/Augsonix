@@ -96,6 +96,7 @@ func cliCompletionRootSpec() cliCompletionSpec {
 		completionFlag("--output-format", cliCompletionStaticValue, "text", "json", "stream-json"),
 		completionFlag("--add-dir", cliCompletionPathValue),
 		completionFlag("--allowed-tools --allowedTools", cliCompletionStaticValue),
+		completionFlag("--read-only", cliCompletionNoValue),
 		completionFlag("--ablate", cliCompletionStaticValue, "none", "all", "evidence", "planner", "subagent", "retrieval", "compaction"),
 		help,
 	}

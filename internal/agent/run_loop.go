@@ -186,13 +186,8 @@ func (a *Agent) beginRunTurn(ctx context.Context, input string) (rawInput string
 	} else if strings.TrimSpace(a.turnInput) == "" {
 		a.turnInput = rawInput
 	}
-	intent := taskintent.Classify(a.turnInput)
-	a.deliveryTaskExpected = intent.NeedsEvidence()
-	a.deliveryMutationExpected = intent == taskintent.Mutation && registryHasWriterTools(a.tools)
-	a.deliveryPersistentExpected = taskintent.NeedsPersistentAction(a.turnInput)
-	a.recoveryTaskSummary = boundedRecoveryTaskSummary(a.turnInput)
-	// Freeze TaskPolicy for this turn from the session role setting. Subsequent
-	// SetAgentPreset calls must not change this turn's route/review floor.
+	// Freeze TaskPolicy before the delivery expectations that read its
+	// constraints; later SetAgentPreset calls must not move this turn's floor.
 	if policy, ok := taskpolicy.FromContext(ctx); ok {
 		a.turnPolicy = policy
 	} else {
@@ -204,6 +199,11 @@ func (a *Agent) beginRunTurn(ctx context.Context, input string) (rawInput string
 		})
 	}
 	a.turnPolicySet = true
+	intent := taskintent.Classify(a.turnInput)
+	a.deliveryTaskExpected = intent.NeedsEvidence()
+	a.deliveryMutationExpected = expectsMutationReceipt(intent, a.turnPolicy, a.tools)
+	a.deliveryPersistentExpected = taskintent.NeedsPersistentAction(a.turnInput)
+	a.recoveryTaskSummary = boundedRecoveryTaskSummary(a.turnInput)
 	// Align legacy delivery gates with the frozen role setting. Delivery always
 	// enables the full readiness contract. Light/Balanced only elevate when the
 	// turn is a mutation that requires forced review or is high-risk.

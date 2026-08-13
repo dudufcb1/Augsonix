@@ -291,7 +291,11 @@ type Registry struct {
 	// schema. Nil means every registered tool is provider-visible (tests and
 	// legacy direct construction).
 	providerVisible map[string]bool
-	schemaRev       atomic.Uint64
+	// admit, when non-nil, filters every registration: it returns the tool to
+	// register, or nil to reject it. Late arrivals (MCP tools that land after a
+	// server connects) pass through it too.
+	admit     func(Tool) Tool
+	schemaRev atomic.Uint64
 }
 
 // NewRegistry returns an empty registry.
@@ -357,6 +361,43 @@ func (r *Registry) isProviderVisibleLocked(name string) bool {
 	return r.providerVisible[name]
 }
 
+// SetAdmission installs a filter every present and future registration passes
+// through; it returns the tool to register, or nil to reject it. Tools already
+// registered are re-filtered here, so the bound holds for the whole session
+// rather than only for what was registered before the call. It returns the
+// names dropped by that sweep. Passing nil clears the filter.
+func (r *Registry) SetAdmission(admit func(Tool) Tool) []string {
+	if r == nil {
+		return nil
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	r.admit = admit
+	if admit == nil {
+		return nil
+	}
+	var dropped []string
+	kept := r.order[:0]
+	for _, name := range r.order {
+		replacement := admit(r.tools[name])
+		if replacement == nil {
+			delete(r.tools, name)
+			delete(r.canon, name)
+			dropped = append(dropped, name)
+			continue
+		}
+		r.tools[name] = replacement
+		r.canon[name] = provider.CanonicalizeSchema(replacement.Schema())
+		kept = append(kept, name)
+	}
+	r.order = kept
+	if len(dropped) > 0 {
+		r.schemaRev.Add(1)
+	}
+	return dropped
+}
+
 // Add inserts (or replaces) a tool, preserving first-seen order. The schema is
 // canonicalized once here — it never changes after registration, so Schemas()
 // (called every turn) reuses the result instead of re-marshaling.
@@ -364,6 +405,11 @@ func (r *Registry) Add(t Tool) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
+	if r.admit != nil {
+		if t = r.admit(t); t == nil {
+			return
+		}
+	}
 	name := t.Name()
 	for prefix := range r.suspended {
 		if strings.HasPrefix(name, prefix) {

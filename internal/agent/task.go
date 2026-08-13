@@ -227,7 +227,7 @@ func (readOnlyBash) Schema() json.RawMessage {
 
 func (b readOnlyBash) Execute(ctx context.Context, args json.RawMessage) (string, error) {
 	if !permission.BashCommandIsReadOnly(args) {
-		return "", tool.Blocked("blocked: read-only subagents can run only permission-classified foreground read-only commands")
+		return "", tool.Blocked("blocked: read-only mode runs only permission-classified foreground read-only commands")
 	}
 	return b.inner.Execute(ctx, args)
 }

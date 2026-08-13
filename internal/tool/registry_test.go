@@ -260,3 +260,62 @@ func TestRegistrySchemasCanonicalizesEquivalentOrdering(t *testing.T) {
 		t.Fatalf("equivalent schemas canonicalized differently:\n  first:  %s\n  second: %s", got, want)
 	}
 }
+
+// writerStub is a stubTool that reports itself as writer-capable.
+type writerStub struct{ stubTool }
+
+func (writerStub) ReadOnly() bool { return false }
+
+// TestRegistrySetAdmissionCoversLateArrivals pins the property a session-wide
+// bound needs: filtering only what is already registered would leave the door
+// open, because MCP tools land after their server connects.
+func TestRegistrySetAdmissionCoversLateArrivals(t *testing.T) {
+	r := NewRegistry()
+	r.Add(stubTool{name: "read_file"})
+	r.Add(writerStub{stubTool{name: "write_file"}})
+
+	dropped := r.SetAdmission(func(t Tool) Tool {
+		if t.ReadOnly() {
+			return t
+		}
+		return nil
+	})
+	if len(dropped) != 1 || dropped[0] != "write_file" {
+		t.Fatalf("dropped = %v, want [write_file]", dropped)
+	}
+	if _, ok := r.Get("write_file"); ok {
+		t.Fatal("writer survived the admission sweep")
+	}
+	if _, ok := r.Get("read_file"); !ok {
+		t.Fatal("reader was dropped")
+	}
+
+	r.Add(writerStub{stubTool{name: "mcp__late__delete"}})
+	if _, ok := r.Get("mcp__late__delete"); ok {
+		t.Fatal("a writer registered after the filter was installed got in")
+	}
+	if names := r.Names(); len(names) != 1 || names[0] != "read_file" {
+		t.Fatalf("names = %v, want [read_file]", names)
+	}
+}
+
+// TestRegistrySetAdmissionCanSubstitute covers the other half of the contract:
+// the filter may hand back a replacement (the read-only bash wrapper) instead
+// of rejecting the tool outright.
+func TestRegistrySetAdmissionCanSubstitute(t *testing.T) {
+	r := NewRegistry()
+	r.Add(writerStub{stubTool{name: "bash"}})
+	r.SetAdmission(func(t Tool) Tool {
+		if t.Name() == "bash" {
+			return stubTool{name: "bash"}
+		}
+		return t
+	})
+	got, ok := r.Get("bash")
+	if !ok {
+		t.Fatal("bash was dropped instead of substituted")
+	}
+	if !got.ReadOnly() {
+		t.Fatal("bash was not replaced by its read-only stand-in")
+	}
+}

@@ -8,7 +8,9 @@ import (
 	"reasonix/internal/event"
 	"reasonix/internal/evidence"
 	"reasonix/internal/instruction"
+	"reasonix/internal/taskintent"
 	"reasonix/internal/taskpolicy"
+	"reasonix/internal/tool"
 )
 
 // Final readiness: whether a turn has earned the right to stop. It reads the
@@ -233,6 +235,18 @@ func (a *Agent) finalReadinessCheckFor() finalReadinessCheck {
 	}
 	out.reason = strings.Join(missing, "; ")
 	return out
+}
+
+// expectsMutationReceipt reports whether the turn must show a successful
+// mutation before it answers. An instruction forbidding any change can never
+// produce that receipt, and neither can a registry without writers, so arming
+// the expectation there would deadlock the turn. Plan Mode is not such an
+// instruction: it lifts on approval and execution resumes under this contract.
+func expectsMutationReceipt(intent taskintent.Intent, policy taskpolicy.TaskPolicy, reg *tool.Registry) bool {
+	if intent != taskintent.Mutation || policy.Constraints.InstructedReadOnly {
+		return false
+	}
+	return registryHasWriterTools(reg)
 }
 
 func finalReadinessCheckSource(check instruction.VerifyCheck) string {
