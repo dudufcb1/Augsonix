@@ -564,6 +564,11 @@ type modelSwitchMsg struct {
 	failurePrefix string
 	successNotice string
 	err           error
+	// resumeSession/resumePath, when set, resume that session onto the freshly
+	// built controller once the swap lands. Used by /resume to switch a session
+	// back to its stored model before replaying it.
+	resumeSession *agent.Session
+	resumePath    string
 }
 
 // fetchBalance queries the provider's wallet balance off the event loop. It's a
@@ -2003,7 +2008,10 @@ func (m chatTUI) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// the pre-switch snapshot recovered onto a recovery branch — a
 			// fresh file created by this process, so failure is theoretical.
 			m.followSessionLease()
-			if msg.successNotice != "" {
+			if msg.resumeSession != nil {
+				m.ctrl.Resume(msg.resumeSession, msg.resumePath)
+				m.replayActiveBranch(i18n.M.ResumedTitle)
+			} else if msg.successNotice != "" {
 				m.notice(msg.successNotice)
 			} else {
 				m.notice(fmt.Sprintf(i18n.M.ModelSwitchedFmt, m.label))

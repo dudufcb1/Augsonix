@@ -2,10 +2,10 @@
   "limits": {
     "banner": 15,
     "commented-code": 0,
-    "complexity": 2091,
-    "essay": 3980,
-    "file-size": 107844,
-    "function-size": 8918,
+    "complexity": 2094,
+    "essay": 3982,
+    "file-size": 107856,
+    "function-size": 8925,
     "layering": 1,
     "marker": 0,
     "narrative": 64,
@@ -838,10 +838,10 @@
       "essay": 15
     },
     "internal/cli/chat_tui.go": {
-      "complexity": 333,
+      "complexity": 334,
       "essay": 102,
-      "file-size": 4792,
-      "function-size": 1302
+      "file-size": 4800,
+      "function-size": 1305
     },
     "internal/cli/chat_tui_paste.go": {
       "essay": 9
@@ -851,10 +851,10 @@
       "test-file-size": 3656
     },
     "internal/cli/cli.go": {
-      "complexity": 73,
-      "essay": 58,
-      "file-size": 1947,
-      "function-size": 511
+      "complexity": 75,
+      "essay": 59,
+      "file-size": 1951,
+      "function-size": 515
     },
     "internal/cli/cli_test.go": {
       "essay": 9,
@@ -920,7 +920,7 @@
       "essay": 3
     },
     "internal/cli/resume.go": {
-      "essay": 1
+      "essay": 2
     },
     "internal/cli/review.go": {
       "essay": 8

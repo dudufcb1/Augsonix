@@ -6,6 +6,8 @@ import (
 	"strconv"
 	"strings"
 
+	tea "charm.land/bubbletea/v2"
+
 	"reasonix/internal/agent"
 	"reasonix/internal/i18n"
 )
@@ -209,8 +211,57 @@ func (m *chatTUI) runResumeCommand(input string) {
 		m.notice("resume: " + sessionLeaseHeldNotice(err))
 		return
 	}
+	if m.switchToStoredModelForResume(loaded, target.Path) {
+		return
+	}
 	m.ctrl.Resume(loaded, target.Path)
 	m.replayActiveBranch(i18n.M.ResumedTitle)
+}
+
+// switchToStoredModelForResume re-seats the target session on its stored model
+// before resuming, when that model differs from the active one. It mirrors
+// /model's async rebuild (the swap and Resume land via modelSwitchMsg) and
+// returns true once it has taken over; the caller must not Resume in place.
+// A missing, blank, or already-matching stored model returns false so the
+// caller resumes synchronously on the current controller.
+func (m *chatTUI) switchToStoredModelForResume(loaded *agent.Session, targetPath string) bool {
+	stored, ok := agent.LoadSessionModel(targetPath)
+	if !ok || strings.TrimSpace(stored) == "" || stored == m.modelRef {
+		return false
+	}
+	if m.buildController == nil || m.runtimeSwitchBusy() || m.modelSwitchPending {
+		return false
+	}
+	ref := stored
+	oldCtrl := m.ctrl
+	build := m.buildController
+	m.notice(fmt.Sprintf(i18n.M.ModelSwitchingFmt, ref))
+	m.modelSwitchPending = true
+	m.pendingModelSwitch = func() tea.Msg {
+		c, err := build(controllerBuildSpec{
+			ModelRef:         ref,
+			RuntimeProfile:   m.runtimeProfile,
+			ToolApprovalMode: oldCtrl.ToolApprovalMode(),
+			PlanMode:         oldCtrl.PlanMode(),
+		}, nil, "", oldCtrl)
+		if err != nil {
+			return modelSwitchMsg{ref: ref, err: err}
+		}
+		return modelSwitchMsg{
+			ref:      ref,
+			ctrl:     c,
+			oldCtrl:  oldCtrl,
+			label:    c.Label(),
+			commands: c.Commands(),
+			skills:   c.SlashSkills(),
+			host:     c.Host(),
+			// Resume the target session once the swap lands; the fresh controller
+			// has no adopted history, so Resume seeds it from the loaded session.
+			resumeSession: loaded,
+			resumePath:    targetPath,
+		}
+	}
+	return true
 }
 
 // resumeArgItems completes the index argument of "/resume <n>": once past the

@@ -1250,11 +1250,15 @@ func chatREPL(args []string, version string) int {
 			overrides.Effort = spec.EffortOverride
 		}
 		// Keep the carried conversation in its existing file so the switch doesn't
-		// orphan a duplicate (#2807).
-		path := agent.ContinueSessionPath(resumePath, c.SessionDir(), c.Label())
-		if err := adoptCarriedHistoryPreservingProfileAndGrants(c, carry, path, oldCtrl); err != nil {
-			c.Close()
-			return nil, err
+		// orphan a duplicate (#2807). A nil carry with no resumePath means "fresh
+		// controller" (/resume builds one to re-seat a stored model before
+		// Resume): skip adoption so nothing is snapshot to a throwaway path.
+		if len(carry) > 0 || resumePath != "" {
+			path := agent.ContinueSessionPath(resumePath, c.SessionDir(), c.Label())
+			if err := adoptCarriedHistoryPreservingProfileAndGrants(c, carry, path, oldCtrl); err != nil {
+				c.Close()
+				return nil, err
+			}
 		}
 		c.EnableInteractiveApproval()
 		c.SetPlanMode(spec.PlanMode)

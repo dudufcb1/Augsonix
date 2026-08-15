@@ -491,3 +491,79 @@ func TestRunResumeSwitchesSession(t *testing.T) {
 		t.Fatalf("history not loaded from target: %+v", hist)
 	}
 }
+
+func TestSwitchToStoredModelForResumeRebuildsOnStoredModel(t *testing.T) {
+	dir := t.TempDir()
+	targetPath := filepath.Join(dir, "target.jsonl")
+	saveTestSession(t, targetPath, "stored model session")
+	if err := agent.SetBranchModelPreserveUpdated(targetPath, "stored/model"); err != nil {
+		t.Fatal(err)
+	}
+
+	exec := agent.New(nil, nil, agent.NewSession("sys"), agent.Options{}, event.Discard)
+	ctrl := control.New(control.Options{Executor: exec, SessionDir: dir, Label: "test"})
+	m := newTestChatTUI()
+	m.ctrl = ctrl
+	m.modelRef = "current/model"
+	m.runtimeProfile = "full"
+
+	var builtRef string
+	m.buildController = func(spec controllerBuildSpec, carry []provider.Message, resumePath string, oldCtrl control.SessionAPI) (*control.Controller, error) {
+		builtRef = spec.ModelRef
+		return control.New(control.Options{Executor: agent.New(nil, nil, agent.NewSession("sys"), agent.Options{}, event.Discard), SessionDir: dir, Label: "stored/model"}), nil
+	}
+
+	loaded, err := agent.LoadSession(targetPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !m.switchToStoredModelForResume(loaded, targetPath) {
+		t.Fatal("switch should take over when the stored model differs")
+	}
+	if builtRef != "" {
+		t.Fatalf("build must stay async; builtRef = %q before the command runs", builtRef)
+	}
+	if !m.modelSwitchPending || m.pendingModelSwitch == nil {
+		t.Fatal("switch should be pending after taking over")
+	}
+	msg := m.pendingModelSwitch()
+	sw, ok := msg.(modelSwitchMsg)
+	if !ok {
+		t.Fatalf("pending switch returned %T, want modelSwitchMsg", msg)
+	}
+	if sw.err != nil {
+		t.Fatalf("switch build failed: %v", sw.err)
+	}
+	if sw.ref != "stored/model" || builtRef != "stored/model" {
+		t.Fatalf("switch ref = %q (built %q), want stored/model", sw.ref, builtRef)
+	}
+	if sw.resumeSession != loaded || sw.resumePath != targetPath {
+		t.Fatal("switch msg should carry the resume target")
+	}
+}
+
+func TestSwitchToStoredModelForResumeNoopWhenModelMatches(t *testing.T) {
+	dir := t.TempDir()
+	targetPath := filepath.Join(dir, "target.jsonl")
+	saveTestSession(t, targetPath, "prompt")
+	if err := agent.SetBranchModelPreserveUpdated(targetPath, "same/model"); err != nil {
+		t.Fatal(err)
+	}
+
+	exec := agent.New(nil, nil, agent.NewSession("sys"), agent.Options{}, event.Discard)
+	ctrl := control.New(control.Options{Executor: exec, SessionDir: dir, Label: "test"})
+	m := newTestChatTUI()
+	m.ctrl = ctrl
+	m.modelRef = "same/model"
+
+	loaded, err := agent.LoadSession(targetPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if m.switchToStoredModelForResume(loaded, targetPath) {
+		t.Fatal("matching stored model should not trigger a rebuild")
+	}
+	if m.modelSwitchPending {
+		t.Fatal("no rebuild should be pending when the model matches")
+	}
+}
