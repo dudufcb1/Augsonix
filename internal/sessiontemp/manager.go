@@ -3,10 +3,9 @@
 // duration of a logical chat session, while each bwrap/sandbox-exec invocation
 // still enters its own namespace.
 //
-// The manager is intentionally invisible to models and users: no settings,
-// tool parameters, or prompt surface is added. Hot rebuilds retain the same
-// Manager; /new, /clear, resume of another session, and branch switches rotate
-// to a fresh generation.
+// The manager adds no settings, tool parameters, or prompt surface; hot rebuilds
+// retain the same Manager. Oversized tool results spill here, and the model is
+// handed the absolute path of those files to read the parts it needs.
 package sessiontemp
 
 import (

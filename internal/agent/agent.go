@@ -10,7 +10,6 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
-	"unicode/utf8"
 
 	"mvdan.cc/sh/v3/syntax"
 
@@ -30,22 +29,12 @@ import (
 	"reasonix/internal/planmode"
 	"reasonix/internal/provider"
 	"reasonix/internal/sandbox"
+	"reasonix/internal/sessiontemp"
 	"reasonix/internal/shellparse"
 	"reasonix/internal/taskpolicy"
 	"reasonix/internal/tool"
 	"reasonix/internal/workspacelease"
 )
-
-// maxToolOutputBytes caps a single tool result before it goes into the model's
-// context. ~32KB is roughly 8K tokens — enough for a full file read or a busy
-// grep, while preventing one accidental "read this 5 MB log" from blowing the
-// window before the next compaction runs.
-const maxToolOutputBytes = 32 * 1024
-
-// maxHookNoticeBytes caps the combined post-tool hook notices appended to a
-// tool result, so a verbose hook cannot inflate the model context. It rides
-// the tail, which truncateToolOutput preserves.
-const maxHookNoticeBytes = 8 * 1024
 
 const maxEmptyFinalBlocks = 3
 
@@ -314,6 +303,8 @@ type Agent struct {
 	// agents. Unlike planMode it is not a collaboration toggle: it remains on
 	// for the agent's lifetime and validates proxy calls after resolution.
 	readOnlyExecution bool
+
+	sessionTemp *sessiontemp.Manager // session-private temp dir for oversized tool-result spill; nil disables
 
 	// mutationDependencyBarrier records the first durable-state write that
 	// failed or was blocked in the current provider tool batch. executeOne
@@ -919,10 +910,11 @@ type Options struct {
 	RecentKeep             int
 	ArchiveDir             string
 	KeepPolicy             KeepPolicy
-	SessionPath            string // projection sidecar path; empty = memory only
-	WorkspaceID            string // prompt-cache lineage component
-	StrictAlternatingRoles bool   // merge adjacent user turns for strict providers at request time
-	ContextEditing         string // deprecated; native provider editing was removed
+	SessionPath            string               // projection sidecar path; empty = memory only
+	WorkspaceID            string               // prompt-cache lineage component
+	SessionTemp            *sessiontemp.Manager // session-private temp dir for oversized tool-result spill
+	StrictAlternatingRoles bool                 // merge adjacent user turns for strict providers at request time
+	ContextEditing         string               // deprecated; native provider editing was removed
 
 	// Hooks fires PreToolUse / PostToolUse shell hooks around tool calls. nil
 	// disables hook firing.
@@ -1111,6 +1103,7 @@ func New(prov provider.Provider, tools *tool.Registry, session *Session, opts Op
 			budget: runBudget{limit: normalizeTaskBudget(opts.TaskBudget)},
 		},
 		requireVisibleFinal: opts.RequireVisibleFinal,
+		sessionTemp:         opts.SessionTemp,
 		recovery: recoveryIdentity{
 			agentID: strings.TrimSpace(opts.RecoveryAgentID),
 			taskID:  strings.TrimSpace(opts.RecoveryTaskID),
@@ -2761,106 +2754,6 @@ func firstLine(s string) string {
 		return before
 	}
 	return s
-}
-
-// attachHookNotices appends post-tool hook notices to a tool body so the model
-// sees hook feedback (Claude-style). Notices are kept short (maxHookNoticeBytes)
-// and ride the tail, which truncateToolOutput preserves even for huge results.
-func attachHookNotices(body string, notices []string) (string, string) {
-	if len(notices) == 0 {
-		return body, ""
-	}
-	joined := strings.Join(notices, "\n")
-	if len(joined) > maxHookNoticeBytes {
-		joined = joined[:maxHookNoticeBytes] + "\n…[hook notices truncated]"
-	}
-	return truncateToolOutput(strings.TrimRight(body, "\n") + "\n\n" + joined)
-}
-
-// truncateToolOutput is the first-visible hard cap for a tool result. Under-cap
-// bodies are returned byte-identical. Over-cap bodies keep a tool-aware head and
-// tail under maxToolOutputBytes; the full original is stored separately as
-// RawContent by the session writer. The bounded form is stable for the message
-// lifetime and is never re-truncated by later maintenance.
-func truncateToolOutput(s string) (string, string) {
-	return truncateToolOutputFor(s, "", "")
-}
-
-// truncateToolOutputFor is the tool-aware first-visible limiter. toolName and
-// toolCallID populate the truncation marker so the model can re-fetch.
-func truncateToolOutputFor(s, toolName, toolCallID string) (string, string) {
-	if len(s) <= maxToolOutputBytes {
-		return s, ""
-	}
-	strategy := snipStrategy{head: 40, tail: 40, headChars: 8000, tailChars: 8000}
-	switch {
-	case toolName == "bash" || toolName == "shell" || strings.Contains(toolName, "bash"):
-		strategy = snipStrategy{head: 40, tail: 40, headChars: 8000, tailChars: 8000}
-	case toolName == "read_file" || toolName == "web_fetch" || strings.Contains(toolName, "read"):
-		strategy = snipStrategy{head: 120, tail: 12, headChars: 12000, tailChars: 2000}
-	case toolName == "grep" || toolName == "glob" || toolName == "ls" || toolName == "list_dir":
-		strategy = snipStrategy{head: 80, tail: 8, headChars: 10000, tailChars: 1000}
-	}
-	headKeep := strategy.headChars
-	tailKeep := strategy.tailChars
-	if headKeep+tailKeep > maxToolOutputBytes-512 {
-		headKeep = maxToolOutputBytes * 2 / 3
-		tailKeep = maxToolOutputBytes - headKeep - 512
-	}
-	if headKeep < 1024 {
-		headKeep = maxToolOutputBytes / 2
-		tailKeep = maxToolOutputBytes / 2
-	}
-	// Prefer more tail when the body looks like a failure.
-	lower := strings.ToLower(s)
-	if strings.Contains(lower, "error:") || strings.Contains(lower, "panic:") || strings.Contains(lower, "fatal:") {
-		tailKeep = max(tailKeep, maxToolOutputBytes/3)
-		if headKeep+tailKeep > maxToolOutputBytes-512 {
-			headKeep = maxToolOutputBytes - 512 - tailKeep
-		}
-	}
-	head := snapToRuneBoundary(s, 0, headKeep)
-	tail := snapToRuneBoundary(s, len(s)-tailKeep, len(s))
-	omitted := len(s) - len(head) - len(tail)
-	namePart := toolName
-	if namePart == "" {
-		namePart = "tool"
-	}
-	idPart := toolCallID
-	if idPart == "" {
-		idPart = "-"
-	}
-	notice := fmt.Sprintf("tool output truncated: %d of %d bytes elided", omitted, len(s))
-	marker := fmt.Sprintf(
-		"\n\n…[truncated tool=%s call_id=%s original_bytes=%d kept_bytes=%d — full original retained in canonical transcript; re-read or retry with narrower args]…\n\n",
-		namePart, idPart, len(s), len(head)+len(tail),
-	)
-	body := head + marker + tail
-	if len(body) > maxToolOutputBytes {
-		overflow := len(body) - maxToolOutputBytes
-		trimHead := overflow / 2
-		trimTail := overflow - trimHead
-		if trimHead < len(head) {
-			head = snapToRuneBoundary(head, 0, len(head)-trimHead)
-		}
-		if trimTail < len(tail) {
-			tail = snapToRuneBoundary(tail, trimTail, len(tail))
-		}
-		body = head + marker + tail
-	}
-	return body, notice
-}
-
-// snapToRuneBoundary returns s[lo:hi] with the bounds nudged outward until
-// both land on rune-start positions.
-func snapToRuneBoundary(s string, lo, hi int) string {
-	for lo > 0 && !utf8.RuneStart(s[lo]) {
-		lo--
-	}
-	for hi < len(s) && !utf8.RuneStart(s[hi]) {
-		hi++
-	}
-	return s[lo:hi]
 }
 
 // finishReasonMessage maps an abnormal finish_reason to a one-line warning,

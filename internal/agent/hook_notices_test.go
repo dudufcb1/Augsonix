@@ -1,19 +1,20 @@
 package agent
 
 import (
+	"context"
 	"strings"
 	"testing"
 )
 
 func TestAttachHookNoticesEmpty(t *testing.T) {
-	body, notice := attachHookNotices("result ok", nil)
+	body, notice := attachHookNotices(context.Background(), nil, "result ok", nil)
 	if body != "result ok" || notice != "" {
 		t.Fatalf("empty notices must leave body untouched, got body=%q notice=%q", body, notice)
 	}
 }
 
 func TestAttachHookNoticesAppends(t *testing.T) {
-	body, notice := attachHookNotices("result ok", []string{"hook [global/PostToolUse] warn: limite duro"})
+	body, notice := attachHookNotices(context.Background(), nil, "result ok", []string{"hook [global/PostToolUse] warn: limite duro"})
 	if !strings.Contains(body, "result ok") {
 		t.Errorf("body lost the tool result: %q", body)
 	}
@@ -27,7 +28,7 @@ func TestAttachHookNoticesAppends(t *testing.T) {
 
 func TestAttachHookNoticesCapsVerbose(t *testing.T) {
 	notices := []string{strings.Repeat("x", maxHookNoticeBytes+100)}
-	body, _ := attachHookNotices("ok", notices)
+	body, _ := attachHookNotices(context.Background(), nil, "ok", notices)
 	if !strings.Contains(body, "[hook notices truncated]") {
 		t.Error("verbose notices must be capped with a truncation marker")
 	}

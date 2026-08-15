@@ -307,7 +307,7 @@ func (a *Agent) applyPlanModeAndProxy(ctx context.Context, plan *toolCallPlan) (
 			if rc.Unavailable {
 				return toolOutcome{output: result, errMsg: firstLine(rc.UnavailableReason)}, true
 			}
-			body, truncMsg := truncateToolOutputFor(result, plan.call.Name, plan.call.ID)
+			body, truncMsg := truncateToolOutputSpill(ctx, a.sessionTemp, result, plan.call.Name, plan.call.ID)
 			out := toolOutcome{output: body, truncated: truncMsg != "", truncMsg: truncMsg}
 			if truncMsg != "" {
 				out.rawOutput = result
@@ -792,7 +792,7 @@ func (a *Agent) finishToolExecution(ctx context.Context, plan *toolCallPlan) too
 		}
 		a.recordRepeatFailure(call, t, err)
 		rawErr := fmt.Sprintf("error: %v\n%s", err, detail)
-		body, truncMsg := truncateToolOutputFor(rawErr, call.Name, call.ID)
+		body, truncMsg := truncateToolOutputSpill(ctx, a.sessionTemp, rawErr, call.Name, call.ID)
 		out := toolOutcome{
 			output: body, errMsg: firstLine(err.Error()), truncated: truncMsg != "", truncMsg: truncMsg,
 			execution: execution, recoveryGeneration: recoveryGen,
@@ -812,9 +812,9 @@ func (a *Agent) finishToolExecution(ctx context.Context, plan *toolCallPlan) too
 	if a.svc.hooks != nil && call.Name == "task" && !isBackgroundTaskCall(call.Arguments) {
 		a.svc.hooks.SubagentStop(ctx, result)
 	}
-	body, truncMsg := truncateToolOutputFor(result, call.Name, call.ID)
+	body, truncMsg := truncateToolOutputSpill(ctx, a.sessionTemp, result, call.Name, call.ID)
 	if len(hookNotices) > 0 {
-		body, truncMsg = attachHookNotices(body, hookNotices)
+		body, truncMsg = attachHookNotices(ctx, a.sessionTemp, body, hookNotices)
 	}
 	out := toolOutcome{
 		output: body, images: images, truncated: truncMsg != "", truncMsg: truncMsg,

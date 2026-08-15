@@ -1712,9 +1712,9 @@ func build(ctx context.Context, opts Options) (*BuildResult, error) {
 		KeepPolicy:                   keepPolicy,
 		ReasoningLanguage:            cfg.ReasoningLanguage(),
 		PlanModeReadOnlyCommands:     cfg.Agent.PlanModeReadOnlyCommands,
-		SubagentDepth:                0,
 		MaxSubagentDepth:             maxSubagentDepth,
 		MissingReasoningWarnStateDir: config.MissingReasoningWarnStateDir(),
+		SessionTemp:                  sessionTemp,
 	}, sink)
 
 	var runner agent.Runner = executor
