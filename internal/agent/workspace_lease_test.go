@@ -111,6 +111,18 @@ func TestDeliveryWriterWaitsBeforeToolExecutionButReaderDoesNot(t *testing.T) {
 	}
 }
 
+func TestNilWorkspaceLeaseDoesNotBlockWriters(t *testing.T) {
+	writer := &workspaceLeaseTestTool{name: "lease_writer"}
+	a := deliveryLeaseTestAgent(t, nil, writer)
+	outcome := a.executeOne(context.Background(), &a.turn, providerToolCall("write", writer.Name()))
+	if outcome.blocked {
+		t.Fatalf("writer blocked with nil workspace lease: %+v", outcome)
+	}
+	if got := writer.calls.Load(); got != 1 {
+		t.Fatalf("writer calls = %d, want 1", got)
+	}
+}
+
 func TestDeniedDeliveryWriterDoesNotAcquireWorkspaceLease(t *testing.T) {
 	root, locks := t.TempDir(), t.TempDir()
 	deniedOwner, _ := workspacelease.New(root, locks, nil)

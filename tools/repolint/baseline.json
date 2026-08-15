@@ -2,10 +2,10 @@
   "limits": {
     "banner": 15,
     "commented-code": 0,
-    "complexity": 2090,
-    "essay": 3981,
-    "file-size": 107945,
-    "function-size": 8913,
+    "complexity": 2091,
+    "essay": 3980,
+    "file-size": 107844,
+    "function-size": 8918,
     "layering": 1,
     "marker": 0,
     "narrative": 64,
@@ -461,7 +461,7 @@
     "internal/agent/agent.go": {
       "complexity": 38,
       "essay": 55,
-      "file-size": 2085,
+      "file-size": 1978,
       "function-size": 105,
       "struct-state": 3
     },
@@ -699,10 +699,10 @@
       "essay": 1
     },
     "internal/boot/boot.go": {
-      "complexity": 251,
+      "complexity": 252,
       "essay": 104,
-      "file-size": 2069,
-      "function-size": 1728,
+      "file-size": 2073,
+      "function-size": 1732,
       "narrative": 3
     },
     "internal/boot/boot_test.go": {
@@ -1010,7 +1010,7 @@
     },
     "internal/config/config.go": {
       "essay": 52,
-      "file-size": 1471,
+      "file-size": 1472,
       "narrative": 2
     },
     "internal/config/credentials.go": {
@@ -1090,8 +1090,8 @@
     "internal/config/render.go": {
       "complexity": 252,
       "essay": 2,
-      "file-size": 1016,
-      "function-size": 967
+      "file-size": 1017,
+      "function-size": 968
     },
     "internal/config/render_test.go": {
       "test-file-size": 759
@@ -1795,7 +1795,7 @@
       "file-size": 9
     },
     "internal/sessiontemp/manager.go": {
-      "essay": 5
+      "essay": 4
     },
     "internal/shellparse/bash.go": {
       "essay": 8
