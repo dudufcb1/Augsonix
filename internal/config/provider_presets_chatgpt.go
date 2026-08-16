@@ -25,6 +25,7 @@ var chatGPTCodexPreset = ProviderPreset{
 		RequestURL: "https://chatgpt.com/backend-api/codex/responses",
 		Models:     chatGPTCodexModels,
 		Default:    "gpt-5.6-sol",
+		Vision:     true,
 		// La ventana anunciada de 400K incluye los 128K de salida. Reasonix mide
 		// context_window contra la entrada, así que va el techo de entrada real.
 		ContextWindow: 272_000,

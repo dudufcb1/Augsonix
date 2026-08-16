@@ -792,6 +792,12 @@ func TestChatGPTCodexPresetDefaultIsOneOfItsModels(t *testing.T) {
 			t.Errorf("falta el modelo verificado %q", want)
 		}
 	}
+	for _, model := range entry.Models {
+		entry.Model = model
+		if !EffectiveVision(&entry) {
+			t.Errorf("%s debe aceptar imágenes", model)
+		}
+	}
 	// El backend rechaza minimal y lo dice al enumerar los suyos.
 	for _, effort := range entry.SupportedEfforts {
 		if effort == "minimal" {

@@ -225,6 +225,7 @@ func loadForRoot(root string, migrateOnDisk bool) (*Config, error) {
 	normalizeLegacyQwenContextWindows(cfg)
 	normalizeLegacyKimiK3Catalog(cfg)
 	normalizeLegacyOpenCodeGoKimiK3Catalog(cfg)
+	normalizeLegacyChatGPTCodexVision(cfg)
 	normalizeLegacyMimoCustomProviders(cfg)
 	normalizeLegacyProviderModels(cfg)
 	normalizeDesktopOfficialProviderAccess(cfg)
@@ -808,6 +809,7 @@ func normalizeConfigForEdit(cfg *Config) bool {
 	changed = normalizeLegacyQwenContextWindows(cfg) || changed
 	changed = normalizeLegacyKimiK3Catalog(cfg) || changed
 	changed = normalizeLegacyOpenCodeGoKimiK3Catalog(cfg) || changed
+	changed = normalizeLegacyChatGPTCodexVision(cfg) || changed
 	changed = normalizeLegacyMimoCustomProviders(cfg) || changed
 	normalizeLegacyProviderModels(cfg)
 	normalizeDesktopOfficialProviderAccess(cfg)
