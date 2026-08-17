@@ -30,10 +30,13 @@ type Set struct {
 
 // Options configures discovery. CWD defaults to "." and UserDir is the user
 // config root (config.MemoryUserDir()); a "" UserDir disables user-global docs
-// and the auto-memory store.
+// and the auto-memory store. StoreUserDir redirects only the auto-memory store
+// at an external home (a Claude Code home); docs keep resolving from UserDir
+// and callers must not register remember/forget writers against it.
 type Options struct {
-	CWD     string
-	UserDir string
+	CWD          string
+	UserDir      string
+	StoreUserDir string
 }
 
 // Load discovers all memory for a session: the hierarchical docs and the
@@ -53,6 +56,9 @@ func Load(opts Options) *Set {
 			InstructionDiagnostics: resolved.Diagnostics}
 	}
 	store := StoreFor(opts.UserDir, cwd)
+	if opts.StoreUserDir != "" {
+		store = StoreFor(opts.StoreUserDir, cwd)
+	}
 	return &Set{
 		Docs:                   resolved.Documents,
 		PinnedGuidance:         store.pinnedGuidanceForProject(),

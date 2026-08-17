@@ -68,6 +68,7 @@ type Config struct {
 	Secrets          SecretsConfig       `toml:"secrets"`
 	Remote           RemoteConfig        `toml:"remote"`
 	Workspace        WorkspaceConfig     `toml:"workspace"`
+	Memory           MemoryConfig        `toml:"memory"`
 
 	systemPromptFileSource     promptFileSource
 	providerSources            map[string]providerSourceScope

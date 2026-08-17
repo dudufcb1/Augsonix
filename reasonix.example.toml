@@ -352,6 +352,14 @@ commits = false
 # commit cuesta. Cero toma el valor por defecto (1000).
 commit_limit = 0
 
+[memory]
+# Lee las memorias que Claude Code guardo para este proyecto, en SOLO lectura.
+# El home de Claude se resuelve asi: $CLAUDE_CONFIG_DIR, luego ~/.claude-assistant,
+# luego ~/.claude; si ninguno tiene memoria para el proyecto, se usa el store
+# propio de Reasonix. Reasonix jamas escribe en un home de Claude: con esto
+# activo no se registran las tools remember/forget.
+# claude_store = false
+
 [serve]
 # Authentication for the HTTP serve frontend (reasonix serve).
 # auth_mode = "none"      # none | token | password

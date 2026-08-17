@@ -805,6 +805,7 @@ func RenderTOMLForScope(c *Config, scope RenderScope) string {
 	}
 	renderCodeSearch(&b, c.CodeSearch)
 	renderWorkspace(&b, c.Workspace)
+	renderMemory(&b, c.Memory)
 	return b.String()
 }
 

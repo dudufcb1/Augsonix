@@ -655,7 +655,14 @@ func build(ctx context.Context, opts Options) (*BuildResult, error) {
 	if _, err := memory.StoreFor(config.MemoryUserDir(), root).MigrateV2(); err != nil {
 		sink.Emit(event.Event{Kind: event.Notice, Level: event.LevelWarn, Text: "Memory metadata migration did not complete.", Detail: err.Error()})
 	}
-	mem := memory.Load(memory.Options{CWD: root, UserDir: config.MemoryUserDir()})
+	// claude_store redirige solo el store de auto-memoria al home de Claude
+	// detectado para este proyecto; MigrateV2 y las instrucciones siguen en el
+	// home de Reasonix, y el árbol de Claude queda solo lectura (sin writers).
+	storeUserDir := ""
+	if cfg.Memory.ClaudeStore {
+		storeUserDir = memory.ClaudeHomeFor(root)
+	}
+	mem := memory.Load(memory.Options{CWD: root, UserDir: config.MemoryUserDir(), StoreUserDir: storeUserDir})
 	projectChecks := instruction.ExtractHostChecks(mem.Docs)
 	sysPrompt = memory.Compose(sysPrompt, mem)
 
@@ -1191,6 +1198,12 @@ func build(ctx context.Context, opts Options) (*BuildResult, error) {
 			return "memory tools are already enabled."
 		}
 		memoryToolsAdded = true
+		if storeUserDir != "" {
+			// Store externo de Claude: solo lectura. Los writers quedan fuera
+			// porque escribiría en el árbol vivo de otro agente.
+			reg.Add(memory.NewRecallTool(mem.Store))
+			return "enabled memory (read-only claude store)."
+		}
 		if opts.Ablation.Off(ablation.Retrieval) {
 			reg.Add(memory.NewRememberTool(mem.Store))
 			reg.Add(memory.NewForgetTool(mem.Store))
