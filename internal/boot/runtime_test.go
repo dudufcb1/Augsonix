@@ -35,7 +35,7 @@ func TestBuildRuntimeDisablesImplicitSkillInvocation(t *testing.T) {
 	if res.Assembly == nil || res.Assembly.ImplicitSkillInvocation {
 		t.Fatal("reused assembly should record implicit skill invocation as disabled")
 	}
-	if strings.Contains(res.Snapshot.SystemPrompt(), "One-liner index") {
+	if strings.Contains(res.Snapshot.SystemPrompt(), "Listado de nombres") {
 		t.Fatal("skill index should not be provider-visible when implicit invocation is disabled")
 	}
 	for _, entry := range res.Controller.ToolContractEntries() {

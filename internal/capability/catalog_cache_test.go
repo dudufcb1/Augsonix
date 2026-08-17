@@ -129,11 +129,15 @@ func TestDeliveryRouteRenderKeepsCapabilityIDAndProxyInstruction(t *testing.T) {
 	if !strings.Contains(out, `use_capability(action="call", capability_id="mcp-server:gh")`) || !strings.Contains(out, "list its tools") {
 		t.Fatalf("server candidate must instruct connect-and-list:\n%s", out)
 	}
-	// Non-delivery keeps the historical connect_tool_source instruction.
+	// Non-delivery uses the same stable proxy: connect_tool_source is not a
+	// registered tool, so no-ready candidates instruct the concrete id.
 	d.Delivery = false
 	out = RenderTransientBlock(d)
-	if !strings.Contains(out, "connect_tool_source") {
-		t.Fatalf("non-delivery render lost connect_tool_source:\n%s", out)
+	if !strings.Contains(out, `use_capability(action="call", capability_id="mcp-tool:gh/search_issues"`) {
+		t.Fatalf("non-delivery render lost the proxy instruction:\n%s", out)
+	}
+	if strings.Contains(out, "connect_tool_source") {
+		t.Fatalf("non-delivery render must never name the unregistered connect_tool_source:\n%s", out)
 	}
 }
 
@@ -158,14 +162,14 @@ func TestCapabilityProxyRouteRenderKeepsConcreteMCPIDs(t *testing.T) {
 	}
 
 	// CapabilityProxy only replaces the MCP connector. Other configured
-	// capability kinds still use their ordinary source routing.
+	// capability kinds still route by source and instruct the same proxy.
 	skill := Entry{ID: "skill:review", Kind: KindSkill, Name: "review", Status: StatusConfigured, ConnectSource: "skills"}
 	out := RenderTransientBlock(RouteDecision{
 		CapabilityProxy: true,
 		Candidates:      []RouteCandidate{{Entry: skill, Policy: AutoUseSuggest, Reason: "matches task"}},
 	})
-	if !strings.Contains(out, "source:skills") || !strings.Contains(out, "connect_tool_source") {
-		t.Fatalf("MCP proxy routing changed the ordinary skill connector:\n%s", out)
+	if !strings.Contains(out, "source:skills") || !strings.Contains(out, `use_capability(action="call", capability_id="skill:review"`) {
+		t.Fatalf("proxy routing changed the skill connector:\n%s", out)
 	}
 }
 
@@ -257,8 +261,13 @@ func TestOrdinaryRouteRenderDeduplicatesCollapsedMCPSourceLines(t *testing.T) {
 	}
 
 	out := RenderTransientBlock(RouteDecision{Candidates: candidates})
-	if got := strings.Count(out, "- source:mcp/search "); got != 1 {
-		t.Fatalf("collapsed MCP source rendered %d times, want 1:\n%s", got, out)
+	// The two tools of one source now carry distinct concrete capability ids,
+	// so they render as separate actionable lines — collapsing would hide one.
+	if got := strings.Count(out, "- source:mcp/search "); got != 2 {
+		t.Fatalf("same-source MCP tools rendered %d times, want 2 (one per concrete id):\n%s", got, out)
+	}
+	if !strings.Contains(out, `capability_id="mcp-tool:search/search"`) || !strings.Contains(out, `capability_id="mcp-tool:search/fetch"`) {
+		t.Fatalf("same-source tools must each name their concrete id:\n%s", out)
 	}
 	if got := strings.Count(out, "- source:mcp/docs "); got != 1 {
 		t.Fatalf("independent MCP source rendered %d times, want 1:\n%s", got, out)

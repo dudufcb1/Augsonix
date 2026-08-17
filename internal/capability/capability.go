@@ -264,10 +264,15 @@ func RenderTransientBlock(d RouteDecision) string {
 				}
 			}
 		case e.ConnectSource != "":
-			if e.ConnectName != "" {
-				fmt.Fprintf(&line, "; first call connect_tool_source with source=%q name=%q", e.ConnectSource, e.ConnectName)
-			} else {
-				fmt.Fprintf(&line, "; first call connect_tool_source with source=%q", e.ConnectSource)
+			// connect_tool_source is not a registered tool in any mode; the
+			// stable proxy connects and calls by the concrete capability id.
+			switch e.Kind {
+			case KindSkill:
+				fmt.Fprintf(&line, `; call use_capability(action="call", capability_id=%q, arguments={"arguments": "<tarea>"}) — loads and runs the skill`, e.ID)
+			case KindMCPServer:
+				fmt.Fprintf(&line, `; call use_capability(action="call", capability_id=%q) to connect it (after approval) and list its tools`, e.ID)
+			default:
+				fmt.Fprintf(&line, `; call use_capability(action="call", capability_id=%q, arguments={...}) — it connects the server on demand after approval`, e.ID)
 			}
 		}
 		rendered := line.String()

@@ -604,8 +604,8 @@ func TestScriptsStayOutOfSkillIndex(t *testing.T) {
 	}
 
 	index := ApplyIndex("BASE", []Skill{sk})
-	if !strings.Contains(index, "withscripts") || !strings.Contains(index, "cache-safe script skill") {
-		t.Fatalf("skill index missing name/description:\n%s", index)
+	if !strings.Contains(index, "withscripts") {
+		t.Fatalf("skill index missing name:\n%s", index)
 	}
 	for _, forbidden := range []string{"## Scripts", "lint.py", filepath.Join("scripts", "lint.py")} {
 		if strings.Contains(index, forbidden) {
@@ -915,22 +915,25 @@ func TestApplyIndex(t *testing.T) {
 	if !strings.HasPrefix(out, "BASE\n\n# Skills") {
 		t.Error("index should append after the base")
 	}
-	if !strings.Contains(out, "- alpha — the alpha") {
+	if !strings.Contains(out, "- alpha") {
 		t.Errorf("inline skill line missing: %s", out)
 	}
-	if !strings.Contains(out, "- beta [🧬 subagent] — the beta") {
+	if !strings.Contains(out, "- beta [🧬 subagent]") {
 		t.Errorf("subagent tag missing: %s", out)
+	}
+	if strings.Contains(out, "the alpha") || strings.Contains(out, "the beta") {
+		t.Errorf("index should not carry descriptions:\n%s", out)
 	}
 }
 
 func TestApplyIndexMandatesInlineButRestrainsSubagent(t *testing.T) {
 	out := ApplyIndex("BASE", []Skill{{Name: "alpha", Description: "the alpha", RunAs: RunInline}})
 
-	if !strings.Contains(out, "inline) skill is even plausibly relevant") ||
-		!strings.Contains(out, "invoke it before continuing") {
-		t.Errorf("inline skills should be mandatory on plausible relevance:\n%s", out)
+	if !strings.Contains(out, "plausiblemente relevante a la tarea") ||
+		!strings.Contains(out, "invócalo antes de seguir") {
+		t.Errorf("inline skills should be invoked on plausible relevance:\n%s", out)
 	}
-	if !strings.Contains(out, "not on weak relevance") {
+	if !strings.Contains(out, "relevancia fuerte, no débil") {
 		t.Errorf("subagent skills should stay judgment-based, not mandatory:\n%s", out)
 	}
 }

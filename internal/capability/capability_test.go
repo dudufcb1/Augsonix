@@ -155,10 +155,13 @@ func TestRenderTransientBlockMentionsConnectSource(t *testing.T) {
 	}}}
 
 	block := RenderTransientBlock(decision)
-	for _, want := range []string{`<capability-route version="1">`, `source:skills`, `connect_tool_source`} {
+	for _, want := range []string{`<capability-route version="1">`, `source:skills`, `use_capability(action="call", capability_id="skill:review"`} {
 		if !strings.Contains(block, want) {
 			t.Fatalf("block missing %q:\n%s", want, block)
 		}
+	}
+	if strings.Contains(block, "connect_tool_source") {
+		t.Fatalf("block must never name the unregistered connect_tool_source:\n%s", block)
 	}
 }
 

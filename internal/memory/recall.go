@@ -86,7 +86,7 @@ func (t recallTool) Execute(ctx context.Context, args json.RawMessage) (string, 
 	case "list":
 		return formatMemoryList(t.store, filterMemories(t.store.ListAll(), memType, memScope), limit), nil
 	case "":
-		return "", fmt.Errorf("operation is required")
+		return "", fmt.Errorf("operation is required: use operation=\"search\" (add query) | \"read\" (add name) | \"list\" (add optional type/scope filters)")
 	default:
 		return "", fmt.Errorf("unknown operation %q", in.Operation)
 	}

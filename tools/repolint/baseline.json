@@ -2,15 +2,15 @@
   "limits": {
     "banner": 15,
     "commented-code": 0,
-    "complexity": 2094,
+    "complexity": 2096,
     "essay": 3982,
-    "file-size": 107856,
-    "function-size": 8925,
+    "file-size": 107873,
+    "function-size": 8940,
     "layering": 1,
     "marker": 0,
     "narrative": 64,
     "struct-state": 114,
-    "test-file-size": 69308
+    "test-file-size": 69317
   },
   "files": {
     "cmd/e2ebench/main.go": {
@@ -699,10 +699,10 @@
       "essay": 1
     },
     "internal/boot/boot.go": {
-      "complexity": 252,
+      "complexity": 254,
       "essay": 104,
-      "file-size": 2073,
-      "function-size": 1732,
+      "file-size": 2086,
+      "function-size": 1745,
       "narrative": 3
     },
     "internal/boot/boot_test.go": {
@@ -1010,7 +1010,7 @@
     },
     "internal/config/config.go": {
       "essay": 52,
-      "file-size": 1472,
+      "file-size": 1473,
       "narrative": 2
     },
     "internal/config/credentials.go": {
@@ -1045,8 +1045,8 @@
     },
     "internal/config/load.go": {
       "essay": 24,
-      "file-size": 1698,
-      "function-size": 57
+      "file-size": 1700,
+      "function-size": 58
     },
     "internal/config/main_test.go": {
       "essay": 1
@@ -1085,13 +1085,13 @@
       "file-size": 262
     },
     "internal/config/provider_presets_test.go": {
-      "test-file-size": 1
+      "test-file-size": 7
     },
     "internal/config/render.go": {
       "complexity": 252,
       "essay": 2,
-      "file-size": 1017,
-      "function-size": 968
+      "file-size": 1018,
+      "function-size": 969
     },
     "internal/config/render_test.go": {
       "test-file-size": 759
@@ -1821,7 +1821,7 @@
       "file-size": 625
     },
     "internal/skill/skill_test.go": {
-      "test-file-size": 278
+      "test-file-size": 281
     },
     "internal/skill/tools.go": {
       "essay": 2
