@@ -805,3 +805,33 @@ func TestChatGPTCodexPresetDefaultIsOneOfItsModels(t *testing.T) {
 		}
 	}
 }
+
+func TestOpenCodePresetsSendOwnUserAgent(t *testing.T) {
+	// Todo perfil que pegue a OpenCode debe anunciarse con User-Agent propio: sin esa
+	// cabecera la petición sale con el agente por defecto de Go y el filtro antifraude
+	// la barre junto con el tráfico de abuso, que es como se perdió el acceso una vez.
+	// Cubre las tres rutas (OpenAI, Anthropic y Responses), porque cada una arma sus
+	// cabeceras por separado y basta que una se quede atrás para volver a salir anónimo.
+	wanted := map[string]bool{
+		"opencode-go":                    true,
+		"opencode-zen-anthropic":         true,
+		"opencode-go-anthropic":          true,
+		"opencode-go-deepseek-anthropic": true,
+		"opencode-go-deepseek-responses": true,
+	}
+	checked := 0
+	for _, preset := range curatedProviderPresets {
+		if !wanted[preset.ID] {
+			continue
+		}
+		for _, entry := range preset.Entries {
+			if got := entry.Headers["User-Agent"]; got != opencodeUserAgent {
+				t.Errorf("%s (%s): User-Agent = %q, se esperaba %q", preset.ID, entry.BaseURL, got, opencodeUserAgent)
+			}
+			checked++
+		}
+	}
+	if checked != len(wanted) {
+		t.Errorf("se revisaron %d perfiles de OpenCode, se esperaban %d", checked, len(wanted))
+	}
+}

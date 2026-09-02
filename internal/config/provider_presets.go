@@ -116,6 +116,17 @@ var (
 	opencodeZenAnthropicModels       = []string{"claude-sonnet-4-6", "claude-opus-4-8", "claude-haiku-4-5", "qwen3.6-plus", "qwen3.5-plus", "qwen3.6-plus-free"}
 	opencodeZenAnthropicVisionModels = []string{"claude-sonnet-4-6", "claude-opus-4-8", "claude-haiku-4-5"}
 
+	// OpenCode distingue a sus clientes por el User-Agent y barre como abuso el tráfico
+	// que llega anónimo: sin esta cabecera la petición sale con el agente por defecto de
+	// Go, indistinguible de cualquier script. Se anuncia con su propio nombre; suplantar
+	// al cliente oficial es justo el patrón que están cazando.
+	//
+	// Va junto a la cabecera de autenticación porque responden preguntas distintas: la
+	// llave dice qué cuenta paga, el User-Agent dice qué programa la está usando. Sin el
+	// segundo dato, una cuenta legítima y una comprometida se ven igual desde el otro lado.
+	opencodeUserAgent        = "Reasonix"
+	opencodeAttributionHeads = map[string]string{"User-Agent": opencodeUserAgent}
+
 	novitaModels      = []string{"zai-org/glm-5.2", "moonshotai/kimi-k2.7-code", "minimax/minimax-m3", "deepseek/deepseek-v4-pro", "deepseek/deepseek-v4-flash", "qwen/qwen3.7-max", "qwen/qwen3.6-plus", "zai-org/glm-5v-turbo"}
 	gmiModels         = []string{"zai-org/GLM-5.2-FP8", "deepseek-ai/DeepSeek-V4-Pro", "deepseek-ai/DeepSeek-V4-Flash", "moonshotai/Kimi-K2.7-Code", "anthropic/claude-sonnet-4.6", "openai/gpt-5.5"}
 	vercelModels      = []string{"anthropic/claude-sonnet-4.6", "anthropic/claude-opus-4.8", "openai/gpt-5.4", "openai/gpt-5.4-pro", "moonshotai/kimi-k2.7-code", "zai/glm-5.2", "deepseek/deepseek-v4-pro"}
@@ -669,6 +680,7 @@ var curatedProviderPresets = []ProviderPreset{
 			VisionModels:  opencodeGoVisionModels,
 			Default:       "glm-5.2",
 			APIKeyEnv:     "OPENCODE_GO_API_KEY",
+			Headers:       opencodeAttributionHeads,
 			ContextWindow: 128000,
 			ModelOverrides: map[string]ProviderModelOverride{
 				"deepseek-v4-flash": {
@@ -716,6 +728,7 @@ var curatedProviderPresets = []ProviderPreset{
 			VisionModels:  opencodeZenAnthropicVisionModels,
 			Default:       "claude-sonnet-4-6",
 			APIKeyEnv:     "OPENCODE_API_KEY",
+			Headers:       opencodeAttributionHeads,
 			ContextWindow: 262144,
 		}},
 	},
