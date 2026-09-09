@@ -356,6 +356,13 @@ func CodeSearchIndexDir() string {
 	return filepath.Join(userSupportDir(), "codesearch")
 }
 
+// SchedulableDir guarda la lista blanca de sesiones que el planificador puede
+// despertar. Vive en el estado del usuario y no en el proyecto: la autorización
+// es de quien usa Reasonix, no de la carpeta donde corre la sesión.
+func SchedulableDir() string {
+	return filepath.Join(userSupportDir(), "schedulable")
+}
+
 func WorkspaceLeaseDir() string {
 	// Deliberately ignore REASONIX_HOME/REASONIX_CACHE_HOME here. Two app
 	// instances with different state profiles can still open the same user

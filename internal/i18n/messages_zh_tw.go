@@ -249,6 +249,7 @@ var ChineseTraditional = Messages{
 	CmdBranch:           "建立對話分支",
 	CmdSwitchBranch:     "切換對話分支",
 	CmdResume:           "恢復已儲存的會話",
+	CmdAgendable:        "允許排程器喚醒此工作階段，或列出與撤銷",
 	CmdModel:            "切換模型",
 	CmdStatus:           "顯示工作階段狀態",
 	CmdWorkMode:         "切換執行設定",

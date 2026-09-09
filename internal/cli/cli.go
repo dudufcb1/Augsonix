@@ -126,6 +126,8 @@ func RunWithBuildInfo(args []string, info BuildInfo) int {
 		return runInteractiveSession(rest, version)
 	case "serve":
 		return runServe(rest)
+	case "agenda":
+		return runScheduler(rest)
 	case "web":
 		return runWebCommand(rest)
 	case "setup":
@@ -207,7 +209,7 @@ func isDefaultInteractiveFlag(arg string) bool {
 
 func shouldMigrateLegacyConfigForCLI(cmd string) bool {
 	switch cmd {
-	case "", "run", "chat", "code", "serve", "web", "setup", "config", "init", "acp", "mcp", "remote", "plugin", "subagent", "doctor", "bot", "upgrade", "update":
+	case "", "run", "chat", "code", "serve", "agenda", "web", "setup", "config", "init", "acp", "mcp", "remote", "plugin", "subagent", "doctor", "bot", "upgrade", "update":
 		return true
 	default:
 		return false

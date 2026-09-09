@@ -123,6 +123,11 @@ func cliCompletionRootSpec() cliCompletionSpec {
 		completionSpec("run", runFlags),
 		completionSpecWithAliases("chat", []string{"code"}, interactiveFlags),
 		completionSpec("serve", serveFlags),
+		completionSpec("agenda", []cliCompletionFlag{
+			completionFlag("--addr", cliCompletionStaticValue),
+			completionFlag("--once", cliCompletionNoValue),
+			help,
+		}),
 		completionSpec("web", serveFlags),
 		completionSpec("setup", []cliCompletionFlag{completionFlag("--local -l", cliCompletionNoValue), help}),
 		completionSpec("config", []cliCompletionFlag{help},

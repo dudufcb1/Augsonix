@@ -244,6 +244,7 @@ type Messages struct {
 	CmdBranch           string // /branch
 	CmdSwitchBranch     string // /switch
 	CmdResume           string // /resume
+	CmdAgendable        string // /agendable
 	CmdRename           string // /rename
 	CmdModel            string // /model
 	CmdStatus           string // /status

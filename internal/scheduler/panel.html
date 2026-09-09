@@ -1,0 +1,561 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Reasonix · Agenda</title>
+<style>
+  :root{
+    --bg:#f6f7fb; --card:#ffffff; --line:#e6e9ef; --line-2:#d0d4e0;
+    --fg:#323338; --dim:#676879;
+    --blue:#0073ea; --blue-dark:#0060b9; --purple:#a25ddc; --green:#00c875;
+    --orange:#fdab3d; --red:#e2445c; --shadow:0 4px 12px rgba(0,0,0,.06);
+    --r:8px;
+    --sans:"Figtree",system-ui,-apple-system,"Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--fg);font:15px/1.5 var(--sans)}
+  .wrap{max-width:1180px;margin:0 auto;padding:28px 20px 80px}
+  header{display:flex;align-items:flex-start;justify-content:space-between;gap:16px;flex-wrap:wrap;margin-bottom:8px}
+  h1{font-size:28px;margin:0 0 2px;font-weight:700;letter-spacing:-.02em}
+  .sub{color:var(--dim);font-size:14px}
+  h2{font-size:15px;font-weight:600;margin:30px 0 12px;display:flex;align-items:center;gap:10px}
+  h2::after{content:"";flex:1;height:1px;background:var(--line);order:1}
+  .h2btn{order:2;font-size:12.5px;padding:5px 12px;font-weight:600}
+  .pill{display:inline-block;padding:2px 10px;border-radius:999px;font-size:12px;font-weight:600;color:#fff}
+  .pill.blue{background:var(--blue)} .pill.green{background:var(--green)}
+  .pill.orange{background:var(--orange)} .pill.red{background:var(--red)}
+  .pill.purple{background:var(--purple)} .pill.grey{background:#c3c6d4}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:var(--r);box-shadow:var(--shadow)}
+  .note{display:flex;gap:12px;align-items:flex-start;background:#fff;border:1px solid var(--line);
+        border-left:4px solid var(--purple);border-radius:var(--r);padding:12px 16px;margin:16px 0 4px;
+        box-shadow:var(--shadow);font-size:14px;color:var(--dim)}
+  .note b{color:var(--fg);font-weight:600}
+  .err{background:#fff1f3;border:1px solid #f7c9d0;border-left:4px solid var(--red);color:#8f1d2f;
+       border-radius:var(--r);padding:12px 16px;margin:14px 0}
+  table{width:100%;border-collapse:separate;border-spacing:0}
+  thead th{text-align:left;font-size:12px;font-weight:600;color:var(--dim);padding:12px 14px;
+           border-bottom:1px solid var(--line);white-space:nowrap}
+  tbody td{padding:12px 14px;border-bottom:1px solid var(--line);vertical-align:middle}
+  tbody tr:last-child td{border-bottom:0}
+  tbody tr{position:relative}
+  tbody td:first-child{border-left:4px solid transparent}
+  tr.k-blue td:first-child{border-left-color:var(--blue)}
+  tr.k-green td:first-child{border-left-color:var(--green)}
+  tr.k-orange td:first-child{border-left-color:var(--orange)}
+  tr.k-red td:first-child{border-left-color:var(--red)}
+  tr.k-grey td:first-child{border-left-color:#c3c6d4}
+  tbody tr:hover td{background:#fafbfd}
+  .mono{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:12.5px;color:var(--dim)}
+  .strong{font-weight:600}
+  .dim{color:var(--dim);font-size:13px}
+  button{font:inherit;font-weight:600;font-size:13.5px;border-radius:6px;padding:7px 14px;cursor:pointer;
+         border:1px solid var(--line-2);background:#fff;color:var(--fg);transition:.12s}
+  button:hover{border-color:#b6bbcc;background:#f7f8fc}
+  button.primary{background:var(--blue);border-color:var(--blue);color:#fff}
+  button.primary:hover{background:var(--blue-dark);border-color:var(--blue-dark)}
+  button.danger{color:var(--red);border-color:#f2c2ca}
+  button.danger:hover{background:#fff1f3;border-color:var(--red)}
+  button:disabled{opacity:.45;cursor:not-allowed}
+  form{padding:20px}
+  .grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:16px}
+  label{display:block;font-size:12.5px;font-weight:600;color:var(--dim);margin-bottom:6px}
+  input,select,textarea{width:100%;font:inherit;font-size:14px;color:var(--fg);background:#fff;
+        border:1px solid var(--line-2);border-radius:6px;padding:9px 11px;transition:.12s}
+  input:focus,select:focus,textarea:focus{outline:none;border-color:var(--blue);box-shadow:0 0 0 3px rgba(0,115,234,.12)}
+  textarea{min-height:86px;resize:vertical}
+  .when{margin-top:7px;font-size:13px;font-weight:600;color:var(--blue);min-height:18px}
+  .actions{display:flex;gap:12px;align-items:center;margin-top:18px;flex-wrap:wrap}
+  .row-actions{display:flex;gap:8px;justify-content:flex-end}
+  .empty{padding:32px 24px;text-align:center;color:var(--dim)}
+  .empty b{color:var(--fg);font-weight:600}
+  .empty code{background:#eef0f6;padding:2px 7px;border-radius:4px;font-size:13px}
+  .skel{height:44px;background:linear-gradient(90deg,#eef0f6,#f6f7fb,#eef0f6);
+        background-size:200% 100%;animation:sh 1.2s infinite;border-radius:6px;margin:8px}
+  @keyframes sh{0%{background-position:200% 0}100%{background-position:-200% 0}}
+  .foot{padding:10px 14px;font-size:12.5px;color:var(--dim);border-top:1px solid var(--line)}
+  .tabs{display:flex;gap:4px;margin:18px 0 4px;border-bottom:2px solid var(--line)}
+  .tab{padding:10px 18px;font-weight:600;font-size:14px;color:var(--dim);background:none;border:0;
+       border-bottom:2px solid transparent;margin-bottom:-2px;border-radius:0;cursor:pointer}
+  .tab:hover{color:var(--fg);background:none}
+  .tab[aria-selected="true"]{color:var(--blue);border-bottom-color:var(--blue)}
+  .search{display:flex;gap:10px;align-items:center;margin:16px 0 12px;flex-wrap:wrap}
+  .search input{flex:1;min-width:220px}
+  .title-cell{font-weight:600}
+  .meta{color:var(--dim);font-size:12.5px;margin-top:2px}
+  .tag{display:inline-block;padding:1px 8px;border-radius:4px;font-size:11.5px;font-weight:600;
+       background:#eef0f6;color:var(--dim);margin-right:6px}
+  .tag.home{background:#ede4f8;color:#6b3fa0}
+  .tag.claude{background:#e0f0ff;color:#0060b9}
+  .path{word-break:break-all}
+  .filters{display:flex;flex-wrap:wrap;gap:8px;margin:0 0 14px}
+  .chip{border:1px solid var(--line-2);background:#fff;color:var(--dim);border-radius:999px;
+        padding:5px 13px;font-size:12.5px;font-weight:600;cursor:pointer}
+  .chip:hover{border-color:var(--purple);color:#6b3fa0;background:#faf7fe}
+  .chip[aria-pressed="true"]{background:var(--purple);border-color:var(--purple);color:#fff}
+  .chip .n{opacity:.7;font-weight:400;margin-left:5px}
+  .tag.home{cursor:pointer}
+  .tag.home:hover{background:#dccbf3}
+  @media (max-width:760px){
+    .wrap{padding:20px 14px 60px}
+    thead{display:none}
+    table,tbody,tr,td{display:block;width:100%}
+    tbody tr{border-bottom:1px solid var(--line);padding:12px 14px 14px;border-left:4px solid transparent}
+    tr.k-blue{border-left-color:var(--blue)} tr.k-green{border-left-color:var(--green)}
+    tr.k-orange{border-left-color:var(--orange)} tr.k-red{border-left-color:var(--red)}
+    tr.k-grey{border-left-color:#c3c6d4}
+    tbody td{border:0;padding:3px 0}
+    tbody td:first-child{border-left:0}
+    td::before{content:attr(data-l);display:block;font-size:11.5px;font-weight:600;color:var(--dim)}
+    .row-actions{justify-content:flex-start;margin-top:10px}
+    button{min-height:44px;padding:10px 16px}
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <div>
+      <h1>Agenda</h1>
+      <div class="sub">Despierta sesiones autorizadas de Reasonix a la hora que le digas.</div>
+    </div>
+    <div class="dim" id="clock"></div>
+  </header>
+
+  <div class="note">
+    <div>
+      <b>Permisos máximos.</b> Todo encargo corre en <b>bypassPermissions</b>: un turno sin nadie
+      mirando que se detenga a pedir aprobación se queda colgado. Por eso el permiso se decide al
+      autorizar la sesión con <b>/agendable</b>, no a media madrugada.
+    </div>
+  </div>
+
+  <div id="error" class="err" hidden></div>
+
+  <div class="tabs" role="tablist">
+    <button class="tab" id="tab-agenda" role="tab" aria-selected="true" data-tab="agenda">Agenda</button>
+    <button class="tab" id="tab-claude" role="tab" aria-selected="false" data-tab="claude">Claude Code</button>
+  </div>
+
+  <section id="panel-agenda">
+  <h2>Sesiones autorizadas</h2>
+  <div class="card" id="sessions"><div class="skel"></div><div class="skel"></div></div>
+
+  <h2>Programar encargo</h2>
+  <form class="card" id="form">
+    <div class="grid">
+      <div>
+        <label for="session">Sesión</label>
+        <select id="session"></select>
+      </div>
+      <div>
+        <label for="runat">Cuándo</label>
+        <input type="datetime-local" id="runat">
+        <div class="when" id="when"></div>
+      </div>
+      <div>
+        <label for="model">Modelo <span style="font-weight:400">(opcional)</span></label>
+        <select id="model"></select>
+      </div>
+      <div>
+        <label for="mode">Cómo</label>
+        <select id="mode">
+          <option value="headless">Sin ventana (contesta y se apaga)</option>
+          <option value="window">Abrir terminal (para seguir ahí)</option>
+        </select>
+        <div class="when" id="modeNote"></div>
+      </div>
+    </div>
+    <div style="margin-top:16px">
+      <label for="prompt">Mensaje</label>
+      <textarea id="prompt" placeholder="revisa cómo va el monitoreo y dime en qué quedó"></textarea>
+    </div>
+    <div class="actions">
+      <button type="submit" class="primary" id="submit">Programar encargo</button>
+      <span class="dim" id="formNote"></span>
+    </div>
+  </form>
+
+  <h2>Encargos <button type="button" id="clear" class="h2btn">Limpiar terminados</button></h2>
+  <div class="card" id="tasks"><div class="skel"></div></div>
+  </section>
+
+  <section id="panel-claude" hidden>
+    <h2>Sesiones de Claude Code</h2>
+    <div class="search">
+      <input type="search" id="q" placeholder="Buscar por título, carpeta, rama o home...">
+      <button id="reload" type="button">Recargar</button>
+      <span class="dim" id="claudeCount"></span>
+    </div>
+    <div class="filters" id="filters"></div>
+    <div class="card" id="claudeList"><div class="skel"></div><div class="skel"></div></div>
+  </section>
+</div>
+
+<script>
+const $ = (id) => document.getElementById(id);
+let state = {sessions: [], tasks: []};
+
+const esc = (s) => String(s ?? "").replace(/[&<>"']/g, c => (
+  {"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+
+const STATE_STYLE = {
+  pending:  {pill:"blue",   label:"Pendiente", key:"k-blue"},
+  done:     {pill:"green",  label:"Hecho",     key:"k-green"},
+  failed:   {pill:"red",    label:"Falló",     key:"k-red"},
+  cancelled:{pill:"grey",   label:"Cancelado", key:"k-grey"},
+};
+
+function showError(msg){
+  const box = $("error");
+  if(!msg){ box.hidden = true; box.textContent = ""; return; }
+  box.hidden = false; box.textContent = msg;
+}
+
+async function api(path, opts){
+  const res = await fetch(path, {...opts,
+    headers:{"Content-Type":"application/json","X-Reasonix-Panel":"1", ...(opts?.headers||{})}});
+  const text = await res.text();
+  const data = text ? JSON.parse(text) : {};
+  if(!res.ok) throw new Error(data.error || ("HTTP " + res.status));
+  return data;
+}
+
+function fmt(ts){
+  const d = new Date(ts);
+  if(isNaN(d)) return "--";
+  return d.toLocaleString("es-MX",{day:"2-digit",month:"short",hour:"2-digit",minute:"2-digit"});
+}
+
+function relative(ts){
+  const diff = new Date(ts) - new Date(), abs = Math.abs(diff);
+  const m = Math.round(abs/6e4), h = Math.round(abs/36e5), d = Math.round(abs/864e5);
+  const unit = m < 60 ? (m + " min") : h < 48 ? (h + " h") : (d + " días");
+  return diff >= 0 ? ("en " + unit) : ("hace " + unit);
+}
+
+function renderSessions(){
+  const box = $("sessions");
+  if(!state.sessions.length){
+    box.innerHTML = '<div class="empty">Ninguna sesión autorizada todavía.<br><br>' +
+      'Abre la sesión que quieras dejar encargada, escribe <code>/agendable</code> y aquí aparecerá.<br>' +
+      '<b>Ojo:</b> mándale al menos un mensaje antes, porque una sesión sin turnos no se guarda en disco.</div>';
+    return;
+  }
+  box.innerHTML = '<table><thead><tr><th>Autorizada</th><th>Sesión</th><th>Carpeta</th>' +
+    '<th>Estado</th><th></th></tr></thead><tbody>' +
+    state.sessions.map(s => {
+      const ok = s.alive !== false;
+      return '<tr class="' + (ok ? "k-green" : "k-red") + '">' +
+      '<td data-l="Autorizada">' + esc(fmt(s.marked_at)) + '</td>' +
+      '<td data-l="Sesión">' + (s.title
+        ? '<div class="title-cell">' + esc(s.title) + '</div>'
+        : '<span class="mono">' + esc(shortID(s.session_id)) + '</span>') + '</td>' +
+      '<td data-l="Carpeta" class="dim">' +
+        (s.kind === "claude"
+          ? '<span class="tag claude">Claude</span><span class="tag home">' +
+            esc((s.config_home || "").split("/").pop()) + '</span>'
+          : '<span class="tag">Reasonix</span>') +
+        '<div style="margin-top:3px">' + esc(s.work_dir || "--") + '</div></td>' +
+      '<td data-l="Estado">' + (ok
+        ? '<span class="pill green">Lista</span>'
+        : '<span class="pill red">Sin archivo</span><div class="dim">Su transcript ya no existe; ' +
+          'revócala y vuelve a autorizarla con un mensaje enviado.</div>') + '</td>' +
+      '<td><div class="row-actions">' +
+        (ok ? '<button data-open="' + esc(s.session_id) + '">Abrir</button>' : "") +
+        '<button class="danger" data-revoke="' + esc(s.session_id) +
+        '">Revocar</button></div></td></tr>';
+    }).join("") + '</tbody></table>';
+}
+
+function renderTasks(){
+  const box = $("tasks");
+  if(!state.tasks.length){
+    box.innerHTML = '<div class="empty">Sin encargos.<br><br>Programa uno arriba y a esa hora la ' +
+      'sesión se levanta sola, hace lo que pediste y se apaga. Tú la reabres cuando quieras.</div>';
+    return;
+  }
+  const pend = state.tasks.filter(t => t.state === "pending").length;
+  box.innerHTML = '<table><thead><tr><th>Cuándo</th><th>Sesión</th><th>Estado</th>' +
+    '<th>Mensaje</th><th></th></tr></thead><tbody>' +
+    state.tasks.map(t => {
+      const st = STATE_STYLE[t.state] || {pill:"grey", label:t.state, key:"k-grey"};
+      const why = t.state === "failed" && t.last_error
+        ? '<div class="dim" style="margin-top:4px">' + esc(t.last_error) + '</div>' : "";
+      const live = t.state === "pending";
+      return '<tr class="' + st.key + '">' +
+        '<td data-l="Cuándo"><div class="strong">' + esc(fmt(t.run_at)) + '</div>' +
+          '<div class="dim">' + esc(relative(t.run_at)) + '</div></td>' +
+        '<td data-l="Sesión" class="mono">' + esc(t.session_id) + '</td>' +
+        '<td data-l="Estado"><span class="pill ' + st.pill + '">' + esc(st.label) + '</span>' +
+          '<div class="dim" style="margin-top:4px">' +
+            (t.mode === "window" ? "con ventana" : "sin ventana") +
+            (t.model ? " · " + esc(t.model) : "") + '</div></td>' +
+        '<td data-l="Mensaje">' + esc(t.prompt) + why + '</td>' +
+        '<td><div class="row-actions">' +
+          '<button data-open="' + esc(t.session_id) + '">Abrir</button>' +
+          (live ? '<button data-run="' + esc(t.id) + '">Ejecutar ya</button>' +
+                  '<button data-cancel="' + esc(t.id) + '">Cancelar</button>' : "") +
+          '<button class="danger" data-del="' + esc(t.id) + '">Borrar</button>' +
+        '</div></td></tr>';
+    }).join("") + '</tbody></table>' +
+    '<div class="foot">' + pend + ' pendiente(s) de ' + state.tasks.length + '</div>';
+}
+
+let MODELS = {reasonix: [], claude: []};
+
+async function loadModels(){
+  try{ MODELS = await api("/api/models"); }
+  catch(e){ MODELS = {reasonix: [], claude: []}; }
+  renderModelOptions();
+}
+
+// renderModelOptions rellena el selector con los modelos del agente al que
+// pertenece la sesión elegida: Reasonix y Claude Code no comparten nombres.
+function renderModelOptions(){
+  const sel = $("model"), sess = $("session");
+  const chosen = state.sessions.find(s => s.session_id === sess.value);
+  const kind = chosen && chosen.kind === "claude" ? "claude" : "reasonix";
+  const list = MODELS[kind] || [];
+  const prev = sel.value;
+  sel.innerHTML = '<option value="">El que ya usa la sesión</option>' +
+    list.map(m => '<option value="' + esc(m.value) + '">' + esc(m.label) +
+      (m.description ? "  ·  " + esc(m.description) : "") +
+      (m.default ? "  (default)" : "") + '</option>').join("");
+  if(prev && list.some(m => m.value === prev)) sel.value = prev;
+}
+
+function renderSessionOptions(){
+  const sel = $("session"), prev = sel.value;
+  const usable = state.sessions.filter(s => s.alive !== false);
+  sel.innerHTML = usable.map(s =>
+    '<option value="' + esc(s.session_id) + '">' +
+    esc(s.title || shortID(s.session_id)) +
+    (s.work_dir ? "  ·  " + esc(lastPath(s.work_dir)) : "") + '</option>').join("");
+  if(prev) sel.value = prev;
+  $("submit").disabled = usable.length === 0;
+  $("formNote").textContent = usable.length === 0
+    ? "Engancha una sesión desde la pestaña Claude Code, o usa /agendable en Reasonix." : "";
+  renderModelOptions();
+}
+
+async function refresh(){
+  try{
+    state = await api("/api/state");
+    state.sessions ||= []; state.tasks ||= [];
+    showError("");
+    renderSessions(); renderTasks(); renderSessionOptions();
+  }catch(e){
+    showError("No se pudo leer la agenda: " + e.message +
+      ". Revisa que el servicio siga arriba: systemctl --user status reasonix-agenda");
+  }
+}
+
+document.addEventListener("click", async (ev) => {
+  const btn = ev.target.closest("button[data-revoke],button[data-cancel],button[data-del]," +
+    "button[data-run],button[data-attach],button[data-open],button[data-open-claude]");
+  if(!btn) return;
+  const id = btn.dataset.revoke || btn.dataset.cancel || btn.dataset.del ||
+             btn.dataset.run || btn.dataset.attach || btn.dataset.open ||
+             btn.dataset.openClaude;
+  try{
+    btn.disabled = true;
+    if(btn.dataset.openClaude){
+      await api("/api/claude/open", {method:"POST", body: JSON.stringify({session_id: id})});
+      return;
+    } else if(btn.dataset.open){
+      await api("/api/sessions/" + encodeURIComponent(id) + "/open", {method:"POST"});
+      return;
+    } else if(btn.dataset.attach){
+      await api("/api/claude/attach", {method:"POST", body: JSON.stringify({session_id: id})});
+      await refreshClaude();
+    } else if(btn.dataset.revoke){
+      if(!confirm("Revocar la autorización de " + id + "?\nSus encargos pendientes no correrán.")) return;
+      await api("/api/sessions/" + encodeURIComponent(id) + "/revoke", {method:"POST"});
+    } else if(btn.dataset.cancel){
+      await api("/api/tasks/" + encodeURIComponent(id) + "/cancel", {method:"POST"});
+    } else if(btn.dataset.del){
+      await api("/api/tasks/" + encodeURIComponent(id), {method:"DELETE"});
+    } else {
+      await api("/api/tasks/" + encodeURIComponent(id) + "/run", {method:"POST"});
+    }
+    await refresh();
+    if(activeTab === "claude") await refreshClaude();
+  }catch(e){ showError(e.message); }
+  finally{ btn.disabled = false; }
+});
+
+$("runat").addEventListener("input", () => {
+  const v = $("runat").value;
+  $("when").textContent = v ? ("Se ejecutará " + relative(new Date(v).toISOString())) : "";
+});
+
+$("form").addEventListener("submit", async (ev) => {
+  ev.preventDefault();
+  const runat = $("runat").value, prompt = $("prompt").value.trim();
+  if(!runat){ showError("Falta la hora."); return; }
+  if(!prompt){ showError("Falta el mensaje: sin él la sesión despierta sin nada que hacer."); return; }
+  try{
+    $("submit").disabled = true;
+    await api("/api/tasks", {method:"POST", body: JSON.stringify({
+      session_id: $("session").value,
+      run_at: new Date(runat).toISOString(),
+      prompt, model: $("model").value.trim(), mode: $("mode").value,
+    })});
+    $("prompt").value = ""; $("when").textContent = ""; $("runat").value = "";
+    showError("");
+    await refresh();
+  }catch(e){ showError("No se pudo programar: " + e.message); }
+  finally{ $("submit").disabled = false; }
+});
+
+let activeTab = "agenda";
+let claudeQuery = "";
+let claudeEnv = "";
+let claudeTimer = null;
+
+function selectTab(name){
+  activeTab = name;
+  for(const t of document.querySelectorAll(".tab")){
+    t.setAttribute("aria-selected", String(t.dataset.tab === name));
+  }
+  $("panel-agenda").hidden = name !== "agenda";
+  $("panel-claude").hidden = name !== "claude";
+  if(name === "claude") refreshClaude();
+}
+
+document.querySelectorAll(".tab").forEach(t =>
+  t.addEventListener("click", () => selectTab(t.dataset.tab)));
+
+$("session").addEventListener("change", renderModelOptions);
+
+function renderModeNote(){
+  $("modeNote").textContent = $("mode").value === "window"
+    ? "Abre una terminal con el encargo ya escrito; requiere la sesión gráfica iniciada."
+    : "Corre invisible y deja la respuesta en la sesión; la abres cuando quieras.";
+}
+$("mode").addEventListener("change", renderModeNote);
+renderModeNote();
+
+$("clear").addEventListener("click", async () => {
+  const btn = $("clear");
+  const done = state.tasks.filter(t => t.state !== "pending").length;
+  const pend = state.tasks.length - done;
+  if(!done){ showError("No hay encargos terminados que limpiar."); return; }
+  if(!confirm("Borrar " + done + " encargo(s) terminado(s)?" +
+      (pend ? "\nLos " + pend + " pendiente(s) se quedan." : ""))) return;
+  try{
+    btn.disabled = true;
+    await api("/api/tasks/clear", {method:"POST", body: "{}"});
+    showError("");
+    await refresh();
+  }catch(e){ showError("No se pudo limpiar: " + e.message); }
+  finally{ btn.disabled = false; }
+});
+
+$("reload").addEventListener("click", async () => {
+  const btn = $("reload");
+  try{
+    btn.disabled = true; btn.textContent = "Recargando...";
+    const data = await api("/api/claude/refresh?limit=60&q=" + encodeURIComponent(claudeQuery) +
+      "&env=" + encodeURIComponent(claudeEnv), {method:"POST", body: "{}"});
+    renderClaude(data);
+  }catch(e){ showError("No se pudo recargar: " + e.message); }
+  finally{ btn.disabled = false; btn.textContent = "Recargar"; }
+});
+
+// shortID acorta el identificador para cuando no hay título que mostrar: el
+// hash completo ocupa una línea entera y no dice nada de la conversación.
+function shortID(id){
+  const s = String(id || "");
+  return s.length > 14 ? s.slice(0, 8) + "\u2026" : s;
+}
+
+// lastPath deja la última carpeta de una ruta, que es la que identifica el
+// proyecto sin llenar el desplegable.
+function lastPath(p){
+  const parts = String(p || "").replace(/\/+$/, "").split("/");
+  return parts[parts.length - 1] || p;
+}
+
+function bytes(n){
+  return n >= 1e6 ? (n/1e6).toFixed(1) + " MB" : Math.max(1, Math.round(n/1e3)) + " KB";
+}
+
+function renderFilters(envs){
+  const box = $("filters");
+  if(!envs || !envs.length){ box.innerHTML = ""; return; }
+  const total = envs.reduce((a, e) => a + e.count, 0);
+  box.innerHTML =
+    '<button type="button" class="chip" data-env="" aria-pressed="' + (claudeEnv === "") + '">' +
+      'Todos<span class="n">' + total + '</span></button>' +
+    envs.map(e => '<button type="button" class="chip" data-env="' + esc(e.name) + '" aria-pressed="' +
+      (claudeEnv === e.name) + '">' + esc(e.name) + '<span class="n">' + e.count + '</span></button>').join("");
+}
+
+function renderClaude(data){
+  const box = $("claudeList"), list = data.sessions || [];
+  renderFilters(data.environments);
+  $("claudeCount").textContent = list.length + " de " + (data.matched ?? data.total ?? 0) +
+    (claudeEnv ? (" en " + claudeEnv) : " sesiones");
+  if(!list.length){
+    box.innerHTML = '<div class="empty">' + (claudeQuery
+      ? 'Ninguna sesión coincide con <b>' + esc(claudeQuery) + '</b>.'
+      : 'No se encontraron sesiones de Claude Code en tus homes.') + '</div>';
+    return;
+  }
+  box.innerHTML = '<table><thead><tr><th>Sesión</th><th>Dónde</th><th>Actividad</th>' +
+    '<th></th></tr></thead><tbody>' +
+    list.map(s => '<tr class="' + (s.attached ? "k-green" : "k-blue") + '">' +
+      '<td data-l="Sesión"><div class="title-cell">' + esc(s.title) + '</div>' +
+        (s.title === "(sin título)"
+          ? '<div class="meta mono">' + esc(shortID(s.id)) + '</div>' : "") + '</td>' +
+      '<td data-l="Dónde"><span class="tag home" data-env-pick="' +
+        esc(s.environment || s.launcher || s.home_label) + '">' +
+        esc(s.environment || s.launcher || s.home_label) + '</span>' +
+        '<div class="meta path">' + esc(s.cwd || s.project) + '</div>' +
+        '<div class="meta">' + esc(s.branch || "--") + ' · ' + bytes(s.size) + '</div></td>' +
+      '<td data-l="Actividad">' + esc(fmt(s.updated)) +
+        '<div class="meta">' + esc(relative(s.updated)) + '</div></td>' +
+      '<td><div class="row-actions">' +
+        '<button data-open-claude="' + esc(s.id) + '">Abrir</button>' +
+        (s.attached
+          ? '<span class="pill green">Enganchada</span>'
+          : '<button class="primary" data-attach="' + esc(s.id) + '">Enganchar</button>') +
+      '</div></td></tr>').join("") + '</tbody></table>';
+}
+
+async function refreshClaude(){
+  try{
+    const data = await api("/api/claude/sessions?limit=60&q=" + encodeURIComponent(claudeQuery) +
+      "&env=" + encodeURIComponent(claudeEnv));
+    renderClaude(data);
+  }catch(e){
+    showError("No se pudieron leer las sesiones de Claude Code: " + e.message);
+  }
+}
+
+document.addEventListener("click", (ev) => {
+  const chip = ev.target.closest(".chip[data-env]");
+  const tag = ev.target.closest("[data-env-pick]");
+  if(!chip && !tag) return;
+  const pick = chip ? chip.dataset.env : tag.dataset.envPick;
+  // Volver a picar el entorno activo quita el filtro, para no dejar al usuario
+  // encerrado sin más salida que buscar el botón "Todos".
+  claudeEnv = (pick === claudeEnv) ? "" : pick;
+  refreshClaude();
+});
+
+$("q").addEventListener("input", () => {
+  claudeQuery = $("q").value.trim();
+  clearTimeout(claudeTimer);
+  claudeTimer = setTimeout(refreshClaude, 180);
+});
+
+setInterval(() => { $("clock").textContent = new Date().toLocaleTimeString("es-MX"); }, 1000);
+refresh();
+setInterval(() => { if(activeTab === "agenda") refresh(); }, 5000);
+loadModels();
+</script>
+</body>
+</html>

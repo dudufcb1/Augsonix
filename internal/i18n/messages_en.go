@@ -259,6 +259,7 @@ var English = Messages{
 	CmdBranch:           "create a conversation branch",
 	CmdSwitchBranch:     "switch conversation branch",
 	CmdResume:           "resume a saved session",
+	CmdAgendable:        "let the scheduler wake this session, or list and revoke",
 	CmdRename:           "rename a session",
 	CmdModel:            "switch model",
 	CmdStatus:           "show session status",

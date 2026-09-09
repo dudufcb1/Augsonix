@@ -4820,6 +4820,8 @@ func (m *chatTUI) runSlashCommand(input string) tea.Cmd {
 		m.notice(i18n.M.SlashClsDone)
 	case "/resume":
 		m.runResumeCommand(input)
+	case "/agendable":
+		m.runAgendableCommand(input)
 	case "/status":
 		m.echoLocalCommand(input)
 		m.showStatusDetails()
