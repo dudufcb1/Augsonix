@@ -6,10 +6,15 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
+
+// postgresConnectTimeout acota solo el establecimiento de la conexión, no las
+// consultas: una migración inicial larga sigue tardando lo que necesite.
+const postgresConnectTimeout = 10 * time.Second
 
 // PostgresStore guarda los vectores en Postgres con pgvector, para que el
 // índice sobreviva a cambiar de máquina. Comparte base entre proyectos: cada
@@ -27,13 +32,11 @@ type PostgresStore struct {
 	dims  int
 }
 
-// OpenPostgresStore conecta y deja el esquema listo. La tabla lleva la dimensión
-// en el nombre porque el tipo vector la fija en la columna: así conviven índices
-// de distinta dimensión en la misma base en vez de pelearse por una tabla.
-func OpenPostgresStore(ctx context.Context, dsn, workspace, name, model string, dims int) (*PostgresStore, error) {
-	if dims <= 0 {
-		return nil, fmt.Errorf("codesearch: dimensión inválida %d", dims)
-	}
+// postgresPoolConfig arma la configuración del pool. El plazo de conexión evita
+// que un servidor caído cuelgue el arranque para siempre: sin él la apertura
+// hereda un contexto sin fecha límite y espera un saludo TCP que no llega. Un
+// connect_timeout puesto en el DSN gana, porque es una decisión explícita.
+func postgresPoolConfig(dsn string) (*pgxpool.Config, error) {
 	// El pool tiene que dar al menos una conexión por archivo en vuelo: con
 	// menos, la mitad de los trabajadores espera turno y el paralelismo no sirve.
 	poolCfg, err := pgxpool.ParseConfig(dsn)
@@ -42,6 +45,23 @@ func OpenPostgresStore(ctx context.Context, dsn, workspace, name, model string, 
 	}
 	if poolCfg.MaxConns < syncWorkers+1 {
 		poolCfg.MaxConns = syncWorkers + 1
+	}
+	if poolCfg.ConnConfig.ConnectTimeout == 0 {
+		poolCfg.ConnConfig.ConnectTimeout = postgresConnectTimeout
+	}
+	return poolCfg, nil
+}
+
+// OpenPostgresStore conecta y deja el esquema listo. La tabla lleva la dimensión
+// en el nombre porque el tipo vector la fija en la columna: así conviven índices
+// de distinta dimensión en la misma base en vez de pelearse por una tabla.
+func OpenPostgresStore(ctx context.Context, dsn, workspace, name, model string, dims int) (*PostgresStore, error) {
+	if dims <= 0 {
+		return nil, fmt.Errorf("codesearch: dimensión inválida %d", dims)
+	}
+	poolCfg, err := postgresPoolConfig(dsn)
+	if err != nil {
+		return nil, err
 	}
 	pool, err := pgxpool.NewWithConfig(ctx, poolCfg)
 	if err != nil {
