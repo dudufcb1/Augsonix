@@ -5,7 +5,6 @@ package responses
 
 import (
 	"bufio"
-	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -286,13 +285,13 @@ func (c *client) ResetContext() {
 func (c *client) Stream(ctx context.Context, req provider.Request) (<-chan provider.Chunk, error) {
 	requestCtx := provider.WithRequestAttemptCounter(ctx)
 	body, usedPrevious, wireMessages := c.buildRequestBody(req)
-	resp, err := c.send(requestCtx, body)
+	resp, err := c.send(requestCtx, body, req.SessionID)
 	if err != nil && usedPrevious && isStalePreviousResponseError(err) {
 		// A stateful response ID may expire server-side. Retrying once with full
 		// history is safe because no response body has started streaming.
 		c.ResetContext()
 		body, _, wireMessages = c.buildRequestBody(req)
-		resp, err = c.send(requestCtx, body)
+		resp, err = c.send(requestCtx, body, req.SessionID)
 	}
 	if err != nil {
 		return nil, err
@@ -301,42 +300,6 @@ func (c *client) Stream(ctx context.Context, req provider.Request) (<-chan provi
 	out := make(chan provider.Chunk, 64)
 	go c.readStream(requestCtx, resp, out, wireMessages)
 	return out, nil
-}
-
-func (c *client) send(ctx context.Context, body map[string]any) (*http.Response, error) {
-	payload, err := json.Marshal(body)
-	if err != nil {
-		return nil, fmt.Errorf("responses: marshal request: %w", err)
-	}
-	newRequest := func(ctx context.Context) (*http.Request, error) {
-		req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.requestURL, bytes.NewReader(payload))
-		if err != nil {
-			return nil, err
-		}
-		for name, value := range c.extraHeaders {
-			req.Header.Set(name, value)
-		}
-		req.Header.Set("Content-Type", "application/json")
-		bearer := c.apiKey
-		if c.tokens != nil {
-			// Resolved per attempt, not per stream: a retry after a long tool
-			// turn must not reuse a bearer that expired while it ran.
-			token, err := c.tokens(ctx)
-			if err != nil {
-				return nil, err
-			}
-			bearer = token.Token
-			for name, value := range token.Headers {
-				req.Header.Set(name, value)
-			}
-		}
-		req.Header.Set("Authorization", "Bearer "+bearer)
-		if c.caps.sessionCacheHeader && c.sessionCache {
-			req.Header.Set("x-dashscope-session-cache", "enable")
-		}
-		return req, nil
-	}
-	return provider.SendWithRetry(ctx, c.http, c.sendOpts(), newRequest)
 }
 
 func isStalePreviousResponseError(err error) bool {
