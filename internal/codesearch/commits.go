@@ -6,6 +6,7 @@ import (
 	"os/exec"
 	"strings"
 	"time"
+	"unicode/utf8"
 )
 
 const (
@@ -150,10 +151,23 @@ func commitDiff(ctx context.Context, root, hash string) string {
 	if err != nil {
 		return ""
 	}
-	if len(out) > commitDiffLimit {
-		return out[:commitDiffLimit]
+	return truncateValidUTF8(out, commitDiffLimit)
+}
+
+// truncateValidUTF8 recorta a lo más n bytes sin partir un carácter y descarta
+// los bytes que no sean UTF-8 válido. Hace falta porque el texto acaba en
+// Postgres, que rechaza la fila entera ("invalid byte sequence for encoding
+// UTF8") si un corte a ciegas deja medio carácter chino o el diff arrastra
+// contenido binario o latin1; el store local nunca se quejaba de eso.
+func truncateValidUTF8(text string, n int) string {
+	if len(text) > n {
+		cut := n
+		for cut > 0 && !utf8.RuneStart(text[cut]) {
+			cut--
+		}
+		text = text[:cut]
 	}
-	return out
+	return strings.ToValidUTF8(text, "")
 }
 
 func git(ctx context.Context, dir string, args ...string) (string, error) {

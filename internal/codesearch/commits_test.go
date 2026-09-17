@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"unicode/utf8"
 )
 
 // newGitRepo arma un repositorio temporal con los commits que se le pidan, para
@@ -135,5 +136,25 @@ func TestCommitSummaryIsOneReadableLine(t *testing.T) {
 	}
 	if !strings.HasPrefix(got, "abcdef12 ") {
 		t.Errorf("el resumen no arranca con el hash corto: %q", got)
+	}
+}
+
+func TestTruncateValidUTF8KeepsWholeRunes(t *testing.T) {
+	// Un diff con texto chino recortado justo a media letra debe quedar en
+	// UTF-8 válido y sin la letra partida; si no, Postgres rechaza el commit
+	// entero al indexar la historia. También se descartan bytes latin1 sueltos.
+	text := "abc" + "中文" // 3 bytes + 2 letras de 3 bytes cada una
+	got := truncateValidUTF8(text, 5)
+	if got != "abc" {
+		t.Fatalf("esperaba \"abc\", obtuve %q", got)
+	}
+	got = truncateValidUTF8(text, 6)
+	if got != "abc中" {
+		t.Fatalf("esperaba \"abc中\", obtuve %q", got)
+	}
+	dirty := "ok\xe5\xb0\nfin"
+	got = truncateValidUTF8(dirty, 100)
+	if !utf8.ValidString(got) || got != "ok\nfin" {
+		t.Fatalf("esperaba limpiar los bytes inválidos, obtuve %q", got)
 	}
 }
