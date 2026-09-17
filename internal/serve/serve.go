@@ -54,6 +54,9 @@ type Server struct {
 	bindMu sync.Mutex
 	ctrl   control.SessionAPI
 	bc     *Broadcaster
+	// allowedOrigin habilita CORS para un origen exacto. Vacío = sin CORS, que es
+	// el default y lo que impide que una página cualquiera maneje al agente.
+	allowedOrigin string
 	// buildController builds the replacement controller during a model switch.
 	// Nil in production (switchModel falls back to boot.Build); tests inject a
 	// fake so switchModel can be exercised without real provider IO.
@@ -84,10 +87,11 @@ func New(ctrl control.SessionAPI, bc *Broadcaster, serveCfg config.ServeConfig) 
 		bc = NewBroadcaster()
 	}
 	s := &Server{
-		ctrl:   ctrl,
-		bc:     bc,
-		titles: newTitleCache(ctrl.SessionDir()),
-		auth:   newAuthGate(serveCfg),
+		ctrl:          ctrl,
+		bc:            bc,
+		titles:        newTitleCache(ctrl.SessionDir()),
+		auth:          newAuthGate(serveCfg),
+		allowedOrigin: serveCfg.AllowedOrigin,
 	}
 	if cfg, err := config.Load(); err == nil {
 		bc.SetDisplayCurrency(cfg.ExplicitDisplayCurrency())
@@ -470,7 +474,9 @@ func applyEffortEdit(edit *config.Config, entry *config.ProviderEntry, effort st
 // CORS is NOT applied by default — same-origin policy protects the unauthenticated
 // agent endpoints. Call HandlerWithCORS to opt in for local development.
 func (s *Server) Handler() http.Handler {
-	return s.handler()
+	// Sin origen configurado esto devuelve el handler tal cual: el default sigue
+	// siendo sin CORS, que es lo que protege a un servidor sin autenticación.
+	return corsMiddleware(s.handler(), s.allowedOrigin)
 }
 
 // HandlerWithCORS returns the same routes as Handler but adds permissive CORS

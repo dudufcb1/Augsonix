@@ -942,6 +942,11 @@ type ServeConfig struct {
 	// PasswordHash is a bcrypt hash of the password for auth_mode = "password".
 	// Generate one with: reasonix serve --hash-password --password '...'
 	PasswordHash string `toml:"password_hash"`
+	// AllowedOrigin habilita CORS para UN origen exacto. Vacío (el default) deja el
+	// servidor sin CORS, que es lo que bloquea que una página cualquiera maneje al
+	// agente. Se usa para clientes locales que no pueden ser mismo-origen, como el
+	// panel embebido del editor; nunca con "*", porque eso sí abriría el hueco.
+	AllowedOrigin string `toml:"allowed_origin"`
 	// BehindProxy indicates the server sits behind a trusted reverse proxy
 	// (nginx, Caddy, Cloudflare, etc.) that sets X-Forwarded-For and
 	// X-Forwarded-Proto headers. When true, those headers are used for

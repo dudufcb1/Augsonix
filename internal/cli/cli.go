@@ -808,6 +808,7 @@ func runServeWithOptions(args []string, opts serveRunOptions) int {
 	password := fs.String("password", "", "password for auth=password (use --hash-password to store a hash instead)")
 	hashPassword := fs.Bool("hash-password", false, "print a bcrypt hash of --password and exit")
 	behindProxy := fs.Bool("behind-proxy", false, "trust X-Forwarded-For / X-Forwarded-Proto headers from a reverse proxy")
+	allowedOrigin := fs.String("allow-origin", "", "enable CORS for exactly this origin (e.g. an embedded editor panel); empty keeps CORS off")
 	portFile := fs.String("port-file", "", "write the actual bound listen address (host:port) to this file after binding")
 	tokenFile := fs.String("token-file", "", "read the auth=token pre-shared token from this file (overrides --token; keeps the secret out of argv)")
 	pidFile := fs.String("pid-file", "", "write the server process id to this file")
@@ -884,6 +885,11 @@ func runServeWithOptions(args []string, opts serveRunOptions) int {
 	}
 	if *behindProxy {
 		serveCfg.BehindProxy = true
+	}
+	// Un origen exacto, nunca "*": una página web no puede falsificar su propio
+	// Origin, así que acotarlo deja pasar solo al cliente que se autorizó.
+	if *allowedOrigin != "" {
+		serveCfg.AllowedOrigin = *allowedOrigin
 	}
 	mode, err := serve.NormalizeAuthMode(serveCfg.AuthMode)
 	if err != nil {
