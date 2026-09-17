@@ -4,6 +4,7 @@
 package taskpolicy
 
 import (
+	"reasonix/internal/guardrails"
 	"regexp"
 	"strings"
 	"unicode"
@@ -334,6 +335,13 @@ func chooseRoute(policy agentpreset.PresetPolicy, intent Intent, risk Risk, in I
 
 func parseConstraints(instruction string) Constraints {
 	var c Constraints
+	// Con los rails apagados el texto del usuario no se convierte en restricciones.
+	// El motivo es que la coincidencia de abajo es por subcadena y sin ámbito: "don't
+	// modify the auth test" pide excluir UN archivo y termina prohibiendo toda escritura
+	// del turno.
+	if guardrails.Disabled() {
+		return c
+	}
 	lower := strings.ToLower(instruction)
 	// Analysis-only / no modifications
 	if matchesAnyUnscoped(lower, []string{

@@ -16,6 +16,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"reasonix/internal/guardrails"
 	"runtime"
 	"slices"
 	"strconv"
@@ -1871,6 +1872,11 @@ func build(ctx context.Context, opts Options) (*BuildResult, error) {
 		// Controller observe the same temporary generation across rebuilds.
 		SessionTemp: sessionTemp,
 	}
+	// La llave de config se traduce a la variable de entorno para que la lean también
+	// los paquetes hoja (taskpolicy, taskintent), que no reciben la configuración.
+	if cfg.Agent.Guardrails != nil && !*cfg.Agent.Guardrails {
+		guardrails.Disable()
+	}
 	// Guardian: when guardian_model is configured, spawn an LLM safety reviewer
 	// that can auto-allow safe Ask decisions and annotate risky ones before
 	// escalating to the human approval prompt.
@@ -1898,7 +1904,11 @@ func build(ctx context.Context, opts Options) (*BuildResult, error) {
 		if recoveryModel == "" {
 			recoveryModel = strings.TrimSpace(cfg.Agent.GuardianModel)
 		}
-		if recoveryModel == "" {
+		// Sin rails no se cae al modelo principal. Ese respaldo es el que enciende el
+		// Auto Guard sin que nadie lo haya pedido: el propio modelo que trabaja se revisa
+		// a sí mismo y puede declinar la mutación. Con un recovery_model explícito sí se
+		// respeta, porque entonces es una elección deliberada.
+		if recoveryModel == "" && !guardrails.Disabled() {
 			recoveryModel = modelRef
 		}
 		if recoveryModel != "" {

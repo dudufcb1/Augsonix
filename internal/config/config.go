@@ -1270,10 +1270,15 @@ type AgentConfig struct {
 	// Deprecated compatibility fields. Old TOML and desktop clients may still
 	// send them, but config loading normalizes both to zero and rendering omits
 	// them. One-off CLI and unattended bot limits remain separate controls.
-	MaxSteps            int     `toml:"max_steps"`
-	PlannerMaxSteps     int     `toml:"planner_max_steps"`
-	Temperature         float64 `toml:"temperature"`
-	PlannerModel        string  `toml:"planner_model"`
+	MaxSteps        int     `toml:"max_steps"`
+	PlannerMaxSteps int     `toml:"planner_max_steps"`
+	Temperature     float64 `toml:"temperature"`
+	PlannerModel    string  `toml:"planner_model"`
+	// Guardrails apaga las barandas heurísticas cuando es false: la lectura de
+	// intencion de solo-lectura sobre el texto del usuario y el revisor Auto Guard.
+	// nil deja el comportamiento original. Pensado para sesiones acompañadas, donde
+	// el operador revisa cada paso y esas barandas cuestan mas de lo que protegen.
+	Guardrails          *bool   `toml:"guardrails"`
 	GuardianModel       string  `toml:"guardian_model"`
 	GuardianTemperature float64 `toml:"guardian_temperature"`
 	// RecoveryModel optionally names a dedicated model for the independent

@@ -1,6 +1,7 @@
 package taskintent
 
 import (
+	"reasonix/internal/guardrails"
 	"strings"
 )
 
@@ -94,6 +95,10 @@ func goalHasReadonlyDiagnosticIntent(input string) bool {
 }
 
 func goalHasNoModifyConstraint(input string) bool {
+	// Misma razón que en taskpolicy: sin rails, una frase suelta no degrada la tarea.
+	if guardrails.Disabled() {
+		return false
+	}
 	if _, negated := deliveryTaskMutationIntent(input); negated && !deliveryTaskHasMutationIntent(input) {
 		return true
 	}
