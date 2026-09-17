@@ -1,9 +1,12 @@
 package scheduler
 
 import (
+	"bytes"
 	"fmt"
+	"os"
 	"os/exec"
 	"strings"
+	"time"
 
 	"reasonix/internal/claudesessions"
 	"reasonix/internal/schedulable"
@@ -81,7 +84,16 @@ func OpenInTerminal(entry schedulable.Entry) error {
 	return openTerminal(entry, resumeShellCommand(entry))
 }
 
+// launchGrace es cuánto se espera a que el emulador reporte un fallo
+// inmediato (sin DISPLAY, argumento inválido). gnome-terminal termina en
+// milisegundos tras delegar la ventana a su servidor; xterm sigue vivo mientras
+// la ventana exista. Si pasado este plazo sigue corriendo, la ventana abrió.
+const launchGrace = 2 * time.Second
+
 func openTerminal(entry schedulable.Entry, command string) error {
+	if err := checkAgentOnPath(entry); err != nil {
+		return err
+	}
 	dir := strings.TrimSpace(entry.WorkDir)
 	if dir == "" {
 		dir = "."
@@ -91,12 +103,55 @@ func openTerminal(entry schedulable.Entry, command string) error {
 		if err != nil {
 			continue
 		}
-		cmd := exec.Command(path, t.args(dir, command)...)
-		if err := cmd.Start(); err != nil {
-			return fmt.Errorf("scheduler: no se pudo abrir %s: %w", t.bin, err)
-		}
-		go func() { _ = cmd.Wait() }()
-		return nil
+		return startTerminal(t.bin, path, t.args(dir, command))
 	}
 	return fmt.Errorf("scheduler: no se encontró ningún emulador de terminal instalado")
+}
+
+// checkAgentOnPath confirma que el binario que la ventana va a ejecutar existe
+// en el PATH de este proceso. La terminal hereda ese PATH, así que si el
+// agente no está aquí, adentro tampoco: la ventana abriría con un "command
+// not found" que el panel jamás vería.
+func checkAgentOnPath(entry schedulable.Entry) error {
+	bin := "reasonix"
+	if entry.Agent() == schedulable.KindClaude {
+		bin = "claude"
+	}
+	if _, err := exec.LookPath(bin); err != nil {
+		return fmt.Errorf("scheduler: la terminal no encontraría %q (PATH=%s)", bin, os.Getenv("PATH"))
+	}
+	return nil
+}
+
+// startTerminal lanza el emulador y se queda escuchando su stderr un momento:
+// si muere enseguida (por ejemplo sin DISPLAY, "no se puede abrir el visor")
+// el error llega al panel en vez de perderse en /dev/null con un "abierta".
+func startTerminal(name, path string, args []string) error {
+	cmd := exec.Command(path, args...)
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+	if err := cmd.Start(); err != nil {
+		return fmt.Errorf("scheduler: no se pudo abrir %s: %w", name, err)
+	}
+	exited := make(chan error, 1)
+	go func() { exited <- cmd.Wait() }()
+	select {
+	case err := <-exited:
+		if err != nil {
+			return fmt.Errorf("scheduler: %s falló al abrir la ventana (%v): %s",
+				name, err, stderrSummary(stderr.String()))
+		}
+		return nil
+	case <-time.After(launchGrace):
+		return nil
+	}
+}
+
+// stderrSummary deja el stderr en una sola línea legible para el panel.
+func stderrSummary(raw string) string {
+	text := strings.TrimSpace(raw)
+	if text == "" {
+		return "(sin salida en stderr)"
+	}
+	return strings.Join(strings.Fields(text), " ")
 }

@@ -86,3 +86,37 @@ func TestResumeShellCommandWithPromptCarriesTheTaskInline(t *testing.T) {
 		t.Fatalf("la ventana se cerraría al terminar: %s", cmd)
 	}
 }
+
+func TestStartTerminalReportsImmediateFailureWithStderr(t *testing.T) {
+	// Si el emulador muere al instante (sin DISPLAY, gnome-terminal imprime "no
+	// se puede abrir el visor" y sale con 1), el error debe traer ese texto en
+	// vez de reportar la ventana como abierta.
+	t.Parallel()
+	err := startTerminal("fake-term", "/bin/sh", []string{"-c", "echo 'no se puede abrir el visor' >&2; exit 1"})
+	if err == nil {
+		t.Fatal("un emulador que sale con error se reportó como abierto")
+	}
+	if !strings.Contains(err.Error(), "no se puede abrir el visor") {
+		t.Fatalf("el error no trae el stderr del emulador: %v", err)
+	}
+}
+
+func TestStartTerminalTreatsQuickCleanExitAsOpened(t *testing.T) {
+	// gnome-terminal delega la ventana a su servidor y termina con 0 en
+	// milisegundos; eso es éxito, no fallo.
+	t.Parallel()
+	if err := startTerminal("fake-term", "/bin/sh", []string{"-c", "exit 0"}); err != nil {
+		t.Fatalf("una salida limpia se tomó como error: %v", err)
+	}
+}
+
+func TestOpenTerminalFailsWhenTheAgentIsNotOnPath(t *testing.T) {
+	// La terminal hereda el PATH del servicio; si ahí no está `claude`, la
+	// ventana abriría con "command not found" sin que el panel se entere. Se
+	// detecta antes de lanzar nada.
+	t.Setenv("PATH", t.TempDir())
+	err := openTerminal(schedulable.Entry{Kind: schedulable.KindClaude, SessionID: "abc"}, "claude --resume abc")
+	if err == nil || !strings.Contains(err.Error(), `"claude"`) {
+		t.Fatalf("no se detectó el binario ausente: %v", err)
+	}
+}
